@@ -1,0 +1,34 @@
+/* =============================================================================
+   03_reset.sql — reset the AI layer, keep connector data
+   -----------------------------------------------------------------------------
+   Run as OPENFLOW_DEMO_ADMIN. Safe to run repeatedly.
+
+   DROPS: DOC_EXTRACT_RAW, all dynamic tables, the task
+   KEEPS: DOC_METADATA, DOCUMENTS stage, ACL tables — no re-ingest needed
+   ============================================================================= */
+
+USE ROLE OPENFLOW_DEMO_ADMIN;
+USE DATABASE OPENFLOW_DEMO;
+USE SCHEMA SHAREPOINT_DOCS;
+USE WAREHOUSE OPENFLOW_DEMO_INGEST_WH;
+
+/* Reassert grants on connector-owned objects */
+USE ROLE ACCOUNTADMIN;
+GRANT SELECT ON ALL TABLES    IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS TO ROLE OPENFLOW_DEMO_ADMIN;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS TO ROLE OPENFLOW_DEMO_ADMIN;
+GRANT READ ON STAGE OPENFLOW_DEMO.SHAREPOINT_DOCS.DOCUMENTS           TO ROLE OPENFLOW_DEMO_ADMIN;
+USE ROLE OPENFLOW_DEMO_ADMIN;
+
+/* Sanity check */
+SELECT COUNT(*) AS DOCS_INGESTED FROM DOC_METADATA;
+
+/* Tear down our objects, dependents first */
+ALTER TASK IF EXISTS TASK_CLASSIFY_AND_EXTRACT SUSPEND;
+DROP TASK          IF EXISTS TASK_CLASSIFY_AND_EXTRACT;
+DROP DYNAMIC TABLE IF EXISTS INSPECTION_FINDINGS;
+DROP DYNAMIC TABLE IF EXISTS MAINTENANCE_ORDERS;
+DROP DYNAMIC TABLE IF EXISTS INCIDENT_REPORTS;
+DROP DYNAMIC TABLE IF EXISTS PLANOGRAM_FINDINGS;
+DROP ICEBERG TABLE IF EXISTS DOC_EXTRACT_RAW;
+
+/* Now re-run 02_sharepoint_connector.sql from PART 2 onward */
