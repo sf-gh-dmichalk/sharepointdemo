@@ -52,8 +52,7 @@ keys/                       cert.pem + key.pem (gitignored)
 - `OF_SHAREPOINT` — Database (Iceberg-enabled, Snowflake-managed storage)
 - `DOCS` — Schema for connector + AI objects
 - `OPENFLOW` — Schema for gen 2 deployment + runtime
-- `OF_SHAREPOINT_WH` — Warehouse (XS) for interactive queries
-- `OF_SHAREPOINT_INGEST_WH` — Warehouse (S) for connector + AI_EXTRACT
+- `OF_SHAREPOINT_WH` — Warehouse (S) for queries, connector, and AI_EXTRACT
 - `OF_SHAREPOINT_EAI` — External access integration (egress to M365)
 
 **Openflow**

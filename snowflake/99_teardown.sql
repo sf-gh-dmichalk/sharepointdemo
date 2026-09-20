@@ -55,9 +55,8 @@ DROP INTEGRATION IF EXISTS OF_SHAREPOINT_EAI;
 /* --- Database (takes schemas, network rules, stages with it) --- */
 DROP DATABASE IF EXISTS OF_SHAREPOINT;
 
-/* --- Warehouses --- */
+/* --- Warehouse --- */
 DROP WAREHOUSE IF EXISTS OF_SHAREPOINT_WH;
-DROP WAREHOUSE IF EXISTS OF_SHAREPOINT_INGEST_WH;
 
 /* --- Roles --- */
 USE ROLE SECURITYADMIN;
