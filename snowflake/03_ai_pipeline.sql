@@ -1,15 +1,17 @@
 /* =============================================================================
-   02_sharepoint_connector.sql — Store Ops: SharePoint -> AI -> Iceberg
+   03_ai_pipeline.sql — Run AFTER the connector has ingested documents
    -----------------------------------------------------------------------------
    Run as OPENFLOW_DEMO_ADMIN.
 
-   Three parts:
-     PART 1  grants so the Openflow SharePoint connector can build its objects
-     PART 2  AI_CLASSIFY to auto-route documents by type
-     PART 3  AI_EXTRACT for each document type into structured Iceberg tables
+   Creates:
+     1. DOC_EXTRACT_RAW         — Iceberg table for AI_CLASSIFY + AI_EXTRACT output
+     2. TASK_CLASSIFY_AND_EXTRACT — scheduled task (every 2 min)
+     3. INSPECTION_FINDINGS     — dynamic Iceberg table
+     4. MAINTENANCE_ORDERS      — dynamic Iceberg table
+     5. INCIDENT_REPORTS        — dynamic Iceberg table
+     6. PLANOGRAM_FINDINGS      — dynamic Iceberg table
 
-   PART 2-3 CANNOT RUN UNTIL THE CONNECTOR HAS RUN ONCE. They reference the
-   stage and DOC_METADATA table the connector creates.
+   Requires DOC_METADATA and the DOCUMENTS stage to exist (connector creates them).
    ============================================================================= */
 
 USE ROLE OPENFLOW_DEMO_ADMIN;
@@ -17,87 +19,13 @@ USE DATABASE OPENFLOW_DEMO;
 USE SCHEMA SHAREPOINT_DOCS;
 USE WAREHOUSE OPENFLOW_DEMO_INGEST_WH;
 
-/* =============================================================================
-   PART 1 — connector grants
-   ============================================================================= */
-
-GRANT USAGE ON DATABASE OPENFLOW_DEMO
-    TO ROLE OPENFLOW_RUNTIME_ROLE_OPENFLOW_DEMO_RUNTIME;
-
-GRANT USAGE ON SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS
-    TO ROLE OPENFLOW_RUNTIME_ROLE_OPENFLOW_DEMO_RUNTIME;
-
-GRANT CREATE TABLE,
-      CREATE DYNAMIC TABLE,
-      CREATE STAGE,
-      CREATE SEQUENCE,
-      CREATE CORTEX SEARCH SERVICE
-    ON SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS
-    TO ROLE OPENFLOW_RUNTIME_ROLE_OPENFLOW_DEMO_RUNTIME;
-
-GRANT USAGE, OPERATE ON WAREHOUSE OPENFLOW_DEMO_INGEST_WH
-    TO ROLE OPENFLOW_RUNTIME_ROLE_OPENFLOW_DEMO_RUNTIME;
-
-/* Grants BACK to us — without these, tasks fail silently. */
-USE ROLE ACCOUNTADMIN;
-
-GRANT SELECT ON ALL TABLES    IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS
-    TO ROLE OPENFLOW_DEMO_ADMIN;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS
-    TO ROLE OPENFLOW_DEMO_ADMIN;
-GRANT READ ON STAGE OPENFLOW_DEMO.SHAREPOINT_DOCS.DOCUMENTS
-    TO ROLE OPENFLOW_DEMO_ADMIN;
-
-USE ROLE OPENFLOW_DEMO_ADMIN;
-
-/* -----------------------------------------------------------------------------
-   Connector configuration reference — entered in the Openflow UI.
-
-   VARIANT: Microsoft SharePoint (Simple Ingest, document ACLs)
-
-   Source
-     SharePoint Site URL            https://oceancloudtech.sharepoint.com/sites/openflowdemo
-     SharePoint Client ID           <<from Entra app registration>>
-     SharePoint Client Secret       <<SHAREPOINT_CLIENT_SECRET>>
-     SharePoint Tenant ID           cc43eda7-53cf-4c89-8150-957c3653364d
-     Sharepoint Site Domain         oceancloudtech.sharepoint.com
-     Sharepoint Application Certificate  <<keys/cert.pem>>
-     Sharepoint Application Private Key  <<keys/key.pem>>
-
-   Destination
-     Destination Database           OPENFLOW_DEMO
-     Destination Schema             SHAREPOINT_DOCS
-     Snowflake Authentication       SNOWFLAKE_MANAGED
-     Snowflake Role                 OPENFLOW_RUNTIME_ROLE_OPENFLOW_DEMO_RUNTIME
-     Snowflake Warehouse            OPENFLOW_DEMO_INGEST_WH
-
-   Ingestion
-     Sharepoint Document Library    Documents
-     File Extensions To Ingest      pdf,xlsx
-     Sharepoint Site Groups Enabled true
-
-   SharePoint folders:
-     Inspections/   — food safety, health dept, sanitation
-     Maintenance/   — work orders (HVAC, refrigeration, plumbing)
-     Incidents/     — slip/fall, equipment failure, theft
-     Planograms/    — shelf compliance audits
-   -------------------------------------------------------------------------- */
-
-/* After the connector's first run: */
-SHOW STAGES IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS;
-SHOW TABLES IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS;
-SELECT COUNT(*) FROM DOC_METADATA;
-SELECT FILE_ID, FILE_NAME FROM DOC_METADATA ORDER BY FILE_NAME;
-
-
-/* =============================================================================
-   PART 2 — Document classification + raw extraction landing table
-   ============================================================================= */
-
 ALTER STAGE DOCUMENTS SET DIRECTORY = (ENABLE = TRUE);
 ALTER STAGE DOCUMENTS REFRESH;
 
-/* The raw extraction table — one row per document, all types. */
+/* =============================================================================
+   STEP 1 — Raw extraction landing table
+   ============================================================================= */
+
 CREATE OR REPLACE ICEBERG TABLE DOC_EXTRACT_RAW (
     FILE_ID        STRING,
     FILE_NAME      STRING,
@@ -114,9 +42,14 @@ CREATE OR REPLACE ICEBERG TABLE DOC_EXTRACT_RAW (
     ICEBERG_VERSION = 3
     COMMENT = 'Raw AI_EXTRACT output for all store ops document types';
 
-/* Classification + extraction task — runs every 2 minutes.
+/* =============================================================================
+   STEP 2 — Classification + extraction task
+
    Anti-join pattern: only processes docs not yet in DOC_EXTRACT_RAW.
-   AI_CLASSIFY determines doc type, then AI_EXTRACT uses the right schema. */
+   AI_CLASSIFY determines doc type, then AI_EXTRACT uses the right schema.
+
+   No WHEN clause — STATE = SUCCEEDED with 0 rows is the healthy steady state.
+   ============================================================================= */
 
 CREATE OR REPLACE TASK TASK_CLASSIFY_AND_EXTRACT
     WAREHOUSE = OPENFLOW_DEMO_INGEST_WH
@@ -247,7 +180,7 @@ ALTER TASK TASK_CLASSIFY_AND_EXTRACT RESUME;
 
 
 /* =============================================================================
-   PART 3 — Structured dynamic tables per document type
+   STEP 3 — Structured dynamic tables per document type
    ============================================================================= */
 
 /* --- Inspection findings: one row per finding --- */
@@ -257,7 +190,7 @@ CREATE OR REPLACE DYNAMIC ICEBERG TABLE INSPECTION_FINDINGS
     CATALOG         = 'SNOWFLAKE'
     EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED'
     ICEBERG_VERSION = 3
-    COMMENT = 'Structured inspection findings — one row per finding'
+    COMMENT = 'Structured inspection findings -- one row per finding'
 AS
 SELECT
     r.FILE_ID,
@@ -363,7 +296,7 @@ SELECT
 
 
 /* =============================================================================
-   VERIFICATION — what to project after seed documents are processed
+   VERIFICATION
    ============================================================================= */
 
 -- Task health
@@ -391,12 +324,12 @@ SELECT STORE_NUMBER, INCIDENT_TYPE, SEVERITY, INCIDENT_DATE
   FROM INCIDENT_REPORTS
  ORDER BY SEVERITY;
 
--- Planogram compliance
+-- Planogram non-compliance
 SELECT STORE_NUMBER, DEPARTMENT, OVERALL_COMPLIANCE, COMPLIANCE_STATUS, FINDING_DESCRIPTION
   FROM PLANOGRAM_FINDINGS
  WHERE COMPLIANCE_STATUS = 'NON-COMPLIANT';
 
--- Cross-document: stores with both critical inspection findings AND open maintenance
+-- Cross-document: stores with critical findings AND open maintenance
 SELECT DISTINCT i.STORE_NUMBER, i.SEVERITY, i.FINDING_DESCRIPTION, m.WO_NUMBER, m.CATEGORY
   FROM INSPECTION_FINDINGS i
   JOIN MAINTENANCE_ORDERS m ON i.STORE_NUMBER = m.STORE_NUMBER
