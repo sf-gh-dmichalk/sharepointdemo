@@ -400,13 +400,80 @@ SELECT
 
 
 /* =============================================================================
+   STEP 7 — Cortex Search: natural language search over all store ops docs
+
+   Combines all 4 document types into one searchable corpus. Indexed on the
+   finding/description text with store, type, and severity as filterable
+   attributes. Powers RAG queries and can back a Cortex Agent.
+
+   TARGET_LAG = 1 hour is fine for a demo — the dynamic tables feed it.
+   ============================================================================= */
+
+CREATE OR REPLACE CORTEX SEARCH SERVICE STORE_OPS_SEARCH
+    ON search_text
+    ATTRIBUTES store_number, doc_type, severity
+    WAREHOUSE = OF_SHAREPOINT_WH
+    TARGET_LAG = '1 hour'
+    COMMENT = 'Hybrid search over all store ops findings — powers RAG and agents'
+AS (
+    /* Inspections */
+    SELECT
+        STORE_NUMBER,
+        'INSPECTION' AS DOC_TYPE,
+        SEVERITY,
+        FINDING_DESCRIPTION || ' — ' || COALESCE(CORRECTIVE_ACTION, '') AS search_text,
+        FILE_NAME,
+        INSPECTION_DATE AS EVENT_DATE
+    FROM INSPECTION_FINDINGS
+
+    UNION ALL
+
+    /* Maintenance */
+    SELECT
+        STORE_NUMBER,
+        'MAINTENANCE' AS DOC_TYPE,
+        PRIORITY AS SEVERITY,
+        WO_NUMBER || ': ' || PROBLEM_DESCRIPTION || ' — ' || COALESCE(RESOLUTION, '') AS search_text,
+        FILE_NAME,
+        DATE_OPENED AS EVENT_DATE
+    FROM MAINTENANCE_ORDERS
+
+    UNION ALL
+
+    /* Incidents */
+    SELECT
+        STORE_NUMBER,
+        'INCIDENT' AS DOC_TYPE,
+        SEVERITY,
+        INCIDENT_TYPE || ': ' || DESCRIPTION || ' — ' || COALESCE(ROOT_CAUSE, '') AS search_text,
+        FILE_NAME,
+        INCIDENT_DATE AS EVENT_DATE
+    FROM INCIDENT_REPORTS
+
+    UNION ALL
+
+    /* Planograms */
+    SELECT
+        STORE_NUMBER,
+        'PLANOGRAM' AS DOC_TYPE,
+        COMPLIANCE_STATUS AS SEVERITY,
+        DEPARTMENT || ': ' || FINDING_DESCRIPTION AS search_text,
+        FILE_NAME,
+        AUDIT_DATE AS EVENT_DATE
+    FROM PLANOGRAM_FINDINGS
+);
+
+
+/* =============================================================================
    VERIFICATION
    ============================================================================= */
 
+/* --- Task health --- */
 SELECT SCHEDULED_TIME, STATE, ERROR_CODE, ERROR_MESSAGE
   FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(TASK_NAME => 'TASK_CLASSIFY_DOCS'))
  ORDER BY SCHEDULED_TIME DESC LIMIT 5;
 
+/* --- Classification + extraction counts --- */
 SELECT DOC_TYPE, COUNT(*) AS DOCS
   FROM DOC_CLASSIFY_RAW
  GROUP BY DOC_TYPE ORDER BY DOCS DESC;
@@ -415,6 +482,7 @@ SELECT DOC_TYPE, COUNT(*) AS DOCS
   FROM DOC_EXTRACT_RAW
  GROUP BY DOC_TYPE ORDER BY DOCS DESC;
 
+/* --- Structured tables --- */
 SELECT STORE_NUMBER, INSPECTION_DATE, SEVERITY, FINDING_DESCRIPTION
   FROM INSPECTION_FINDINGS ORDER BY STORE_NUMBER, INSPECTION_DATE;
 
@@ -427,9 +495,57 @@ SELECT STORE_NUMBER, INCIDENT_TYPE, SEVERITY, INCIDENT_DATE
 SELECT STORE_NUMBER, DEPARTMENT, OVERALL_COMPLIANCE, COMPLIANCE_STATUS, FINDING_DESCRIPTION
   FROM PLANOGRAM_FINDINGS WHERE COMPLIANCE_STATUS = 'NON-COMPLIANT';
 
-/* Cross-document: stores with critical findings AND open maintenance */
+/* --- Cross-document: stores with critical findings AND open maintenance --- */
 SELECT DISTINCT i.STORE_NUMBER, i.SEVERITY, i.FINDING_DESCRIPTION, m.WO_NUMBER, m.CATEGORY
   FROM INSPECTION_FINDINGS i
   JOIN MAINTENANCE_ORDERS m ON i.STORE_NUMBER = m.STORE_NUMBER
  WHERE i.SEVERITY IN ('Critical', 'Major', 'Violation 3-501.16', 'Violation 4-601.11')
    AND m.STATUS = 'OPEN';
+
+/* --- Cortex Search: natural language queries --- */
+SELECT PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'OF_SHAREPOINT.DOCS.STORE_OPS_SEARCH',
+        '{
+            "query": "refrigeration failures",
+            "columns": ["store_number", "doc_type", "severity", "search_text", "event_date"],
+            "limit": 5
+        }'
+    )
+)['results'] AS results;
+
+SELECT PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'OF_SHAREPOINT.DOCS.STORE_OPS_SEARCH',
+        '{
+            "query": "slip and fall incidents",
+            "columns": ["store_number", "doc_type", "severity", "search_text", "event_date"],
+            "limit": 5
+        }'
+    )
+)['results'] AS results;
+
+SELECT PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'OF_SHAREPOINT.DOCS.STORE_OPS_SEARCH',
+        '{
+            "query": "planogram non-compliance cereal aisle",
+            "columns": ["store_number", "doc_type", "severity", "search_text", "event_date"],
+            "filter": {"@eq": {"doc_type": "PLANOGRAM"}},
+            "limit": 5
+        }'
+    )
+)['results'] AS results;
+
+/* --- Cortex Search with filter: only store #4421 --- */
+SELECT PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'OF_SHAREPOINT.DOCS.STORE_OPS_SEARCH',
+        '{
+            "query": "what issues has this store had",
+            "columns": ["doc_type", "severity", "search_text", "event_date"],
+            "filter": {"@eq": {"store_number": "#4421"}},
+            "limit": 10
+        }'
+    )
+)['results'] AS results;

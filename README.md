@@ -2,7 +2,7 @@
 
 Retail stores generate hundreds of PDFs a week on SharePoint — inspections, work orders, incident reports, planogram audits. They sit there until something goes wrong. This demo makes them queryable.
 
-**SharePoint → Openflow → AI_CLASSIFY → AI_EXTRACT → Iceberg → Dynamic Tables**
+**SharePoint → Openflow → AI_CLASSIFY → AI_EXTRACT → Iceberg → Cortex Search**
 
 ## What it does
 
@@ -10,7 +10,8 @@ Retail stores generate hundreds of PDFs a week on SharePoint — inspections, wo
 2. **AI_CLASSIFY** reads each document and routes it by type (inspection, maintenance, incident, planogram)
 3. **AI_EXTRACT** pulls structured fields using type-specific schemas
 4. **Dynamic Iceberg tables** reshape the raw extraction into queryable tables — one per document type
-5. **Live add**: drop a new PDF in SharePoint, it flows through the entire pipeline with zero manual steps
+5. **Cortex Search** indexes all findings into a hybrid search service — natural language queries across the entire corpus
+6. **Live add**: drop a new PDF in SharePoint, it flows through the entire pipeline with zero manual steps
 
 ## Prerequisites
 
@@ -174,6 +175,10 @@ keys/                       cert.pem + key.pem (gitignored)
 - `DOC_CLASSIFY_RAW` — AI_CLASSIFY output
 - `DOC_EXTRACT_RAW` — AI_EXTRACT output
 - `TASK_CLASSIFY_DOCS` → `TASK_EXTRACT_{INSPECTIONS,MAINTENANCE,INCIDENTS,PLANOGRAMS}`
+
+**Cortex Search**
+
+- `STORE_OPS_SEARCH` — Hybrid search over all findings (filterable by store, doc type, severity)
 
 **Structured output (dynamic Iceberg tables)**
 

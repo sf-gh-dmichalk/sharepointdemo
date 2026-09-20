@@ -29,6 +29,9 @@ DROP DYNAMIC TABLE IF EXISTS DOCS.PLANOGRAM_FINDINGS;
 DROP ICEBERG TABLE IF EXISTS DOCS.DOC_EXTRACT_RAW;
 DROP ICEBERG TABLE IF EXISTS DOCS.DOC_CLASSIFY_RAW;
 
+/* --- Cortex Search --- */
+DROP CORTEX SEARCH SERVICE IF EXISTS DOCS.STORE_OPS_SEARCH;
+
 /* --- Openflow runtime: suspend → terminate → drop ---
    Run these one at a time. Skip any that error with "does not exist".
    The shared OF_DEPLOYMENT is LEFT IN PLACE for other demos. */
