@@ -1,243 +1,511 @@
 #!/usr/bin/env python3
-"""Generate realistic retail store ops PDFs for the SharePoint Openflow demo."""
+"""Generate ~100 realistic retail store ops PDFs for the SharePoint Openflow demo.
+
+12 stores, 6 months of data, 4 document types. Each document has enough
+detail for AI_EXTRACT to pull structured fields and for Cortex Search to
+return meaningful results on natural language queries.
+
+Usage: python3 tools/generate_docs.py
+"""
 from fpdf import FPDF
 import os
+import random
+import shutil
+from datetime import datetime, timedelta
 
-base = "/Users/dmichalk/dev/retail/sharepointdemo/sharepoint/seed-docs"
-live = "/Users/dmichalk/dev/retail/sharepointdemo/sharepoint/livedemo-docs"
+random.seed(42)
 
-def make_inspection(path, store, inspector, date, itype, overall, findings):
+base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sharepoint", "seed-docs")
+live = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sharepoint", "livedemo-docs")
+
+STORES = [
+    ("#3287", "Bloomington, MN"),
+    ("#4421", "Maple Grove, MN"),
+    ("#4590", "Plymouth, MN"),
+    ("#5102", "Eden Prairie, MN"),
+    ("#5234", "Minnetonka, MN"),
+    ("#5501", "Woodbury, MN"),
+    ("#6010", "Eagan, MN"),
+    ("#6223", "Burnsville, MN"),
+    ("#7101", "Lakeville, MN"),
+    ("#7345", "Apple Valley, MN"),
+    ("#8002", "Roseville, MN"),
+    ("#8419", "Brooklyn Park, MN"),
+]
+
+INSPECTORS = [
+    "Sarah Chen, Certified Food Safety Inspector",
+    "Marcus Rivera, Certified Food Safety Inspector",
+    "Jennifer Walsh, Senior Safety Auditor",
+    "David Kim, Health Department Inspector",
+    "Lisa Tran, Regional Compliance Officer",
+]
+
+MERCH_AUDITORS = [
+    "Regional Merchandising -- Lisa Tran",
+    "Regional Merchandising -- Kevin Park",
+    "District Merchandising -- Maria Santos",
+]
+
+MAINTENANCE_VENDORS = {
+    "Refrigeration": ["Refrigeration Solutions Inc.", "CoolTech Services", "Arctic Mechanical"],
+    "HVAC": ["Comfort Systems USA", "Trane Commercial", "Johnson Controls"],
+    "Plumbing": ["Roto-Rooter Commercial", "Citywide Plumbing", "Pipeworks LLC"],
+    "Electrical": ["Midwest Electric", "PowerPro Services", "Bright Spark Electric"],
+}
+
+EQUIPMENT_BY_CATEGORY = {
+    "Refrigeration": [
+        "Walk-in Cooler #1 (Hussmann IRL-0608)", "Walk-in Cooler #2 (Hussmann IRL-0608)",
+        "Walk-in Freezer (Kolpak QSX7-0806)", "Dairy Reach-in (True GDM-49F)",
+        "Frozen Cases Doors 14-18 (Hillphoenix GNFM)", "Meat Case (Tyler NLM)",
+        "Compressor Rack #1", "Compressor Rack #2",
+    ],
+    "HVAC": [
+        "Rooftop Unit #1 (Carrier 48TM) -- serves front of store",
+        "Rooftop Unit #2 (Carrier 48TM) -- serves grocery aisles",
+        "Rooftop Unit #3 (Carrier 48TM) -- serves bakery/deli",
+        "Exhaust Fan -- bakery oven hood",
+    ],
+    "Plumbing": [
+        "Bakery prep sink (Advance Tabco FC-3-1620)",
+        "Deli handwash station", "Restroom fixtures -- customer",
+        "Floor drain -- meat processing room", "Grease trap -- deli",
+    ],
+    "Electrical": [
+        "Main electrical panel", "Emergency lighting -- exit signs aisle 4-6",
+        "POS register #3", "Bakery oven circuit breaker",
+        "Parking lot light pole #7",
+    ],
+}
+
+INSPECTION_FINDINGS_POOL = [
+    ("Critical", "Walk-in cooler operating at {temp}F -- exceeds 41F threshold. Product measured at {ptemp}F internal.", "Unit serviced same day. Temp verified at 38F within 2 hours."),
+    ("Critical", "Raw chicken stored above ready-to-eat items in walk-in cooler. Cross-contamination risk.", "Items immediately repositioned. Staff re-trained on storage order protocol."),
+    ("Major", "Prep sink in {dept} department lacks hot water supply. Measured at {temp}F; minimum required 110F.", "Water heater inspection scheduled within 48 hours."),
+    ("Major", "Hot-hold soup bar measured at {temp}F. Minimum 135F required.", "Soup varieties discarded and replenished. Staff re-trained on hot-hold monitoring."),
+    ("Major", "Deli slicer blade guard has visible damage. Potential metal contamination risk.", "Slicer taken out of service immediately. Replacement part ordered."),
+    ("Minor", "Ceiling tiles above produce wet rack show water staining. No active leak observed.", "Facilities notified for inspection."),
+    ("Minor", "Employee handwash log incomplete -- {n} of 7 shifts missing signatures.", "Department manager counseled. Logs now reviewed at each shift change."),
+    ("Minor", "Floor drain slow to clear in meat processing room.", "Cleared with enzyme treatment during inspection. Preventive service scheduled."),
+    ("Minor", "Deli display case glass cracked -- cosmetic only, no food contact.", "Replacement glass ordered. Expected within 5 business days."),
+    ("Minor", "Expired product found on shelf -- {n} items past sell-by date in {dept}.", "Items pulled immediately. Rotation audit conducted for entire department."),
+    ("Observation", "Excellent FIFO rotation observed in dairy cooler. All date labels current and legible.", ""),
+    ("Observation", "All cold-hold units within spec. Lowest reading {temp}F, highest {htemp}F.", ""),
+    ("Observation", "Excellent pest control documentation. Quarterly reports filed and current.", ""),
+    ("Observation", "Chemical storage properly separated from food storage in all observed areas.", ""),
+    ("Compliant", "All food handler permits current. {n} of {n} associates verified.", ""),
+    ("Compliant", "Allergen labeling on all prepared foods items verified accurate and legible.", ""),
+]
+
+INCIDENT_TYPES = [
+    {
+        "type": "Customer Slip & Fall",
+        "severity": "MODERATE",
+        "desc": "Customer slipped on {cause} near {location}. Customer complained of {injury}. {outcome}.",
+        "root": "{cause_detail}. {contributing}.",
+        "corrective": "1) Area secured immediately. 2) {fix1}. 3) {fix2}. 4) Incident documented with photos.",
+        "cost": "${cost}",
+    },
+    {
+        "type": "Equipment Failure -- Refrigeration",
+        "severity": "HIGH",
+        "desc": "Frozen food cases {doors} found at {temp}F during {shift}. Product partially thawed. {compressor} alarming -- {fault}.",
+        "root": "{motor_issue}. Same rack services {doors} and backup unit was offline for scheduled maintenance.",
+        "corrective": "1) All affected product pulled to walk-in freezer. 2) Emergency maintenance call placed. 3) ${cost} in product discarded. 4) PM schedule under review.",
+        "cost": "${cost}",
+    },
+    {
+        "type": "Equipment Failure -- Power Outage",
+        "severity": "LOW",
+        "desc": "Power outage affecting {area}. Backup generator activated for walk-ins. Floor cases on utility power lost cooling for {duration}.",
+        "root": "Utility transformer failure. Not within store control. Backup generator scope does not include floor-level cases.",
+        "corrective": "1) Filed claim with utility provider. 2) Capital request submitted for expanded generator capacity. 3) Emergency SOP updated.",
+        "cost": "TBD",
+    },
+    {
+        "type": "Theft -- Shoplifting",
+        "severity": "LOW",
+        "desc": "Loss prevention observed individual concealing {items} in {method}. Subject exited store without payment. {apprehended}.",
+        "root": "Blind spot in camera coverage near {location}. Subject exploited gap during peak traffic.",
+        "corrective": "1) Police report filed (case #{case}). 2) Camera angle adjusted. 3) Staff briefed on awareness protocol.",
+        "cost": "${cost} estimated product loss",
+    },
+    {
+        "type": "Employee Injury -- Lifting",
+        "severity": "MODERATE",
+        "desc": "Associate {name} reported {injury} while {activity} in {dept}. {treatment}.",
+        "root": "Pallet weight exceeded single-person lift limit. No spotter present.",
+        "corrective": "1) Workers comp claim filed. 2) Two-person lift policy reinforced. 3) Department briefed at next shift meeting.",
+        "cost": "Workers comp claim pending",
+    },
+]
+
+PLANO_DEPARTMENTS = [
+    ("Grocery -- Cereal Aisle (Aisle 6)", "PLN-2026-Q3-CRL-v2"),
+    ("Grocery -- Snacks (Aisle 8)", "PLN-2026-Q3-SNK-v1"),
+    ("Frozen Foods -- Pizza / Snacks (Doors 14-18)", "PLN-2026-Q3-FZP-v1"),
+    ("Frozen Foods -- Ice Cream (Doors 19-22)", "PLN-2026-Q3-ICE-v1"),
+    ("Dairy -- Yogurt / Milk (Doors 1-6)", "PLN-2026-Q3-DRY-v2"),
+    ("Beverage -- Soda / Water (Aisle 10)", "PLN-2026-Q3-BEV-v1"),
+    ("Health & Beauty (Aisle 12-13)", "PLN-2026-Q3-HBA-v1"),
+    ("Pet Food (Aisle 15)", "PLN-2026-Q3-PET-v1"),
+]
+
+PLANO_FINDINGS_POOL = [
+    ("NON-COMPLIANT", "Shelf {shelf}, Position {pos}: Store brand product placed in position allocated to {brand}. Lost premium placement revenue estimated ${rev}/week."),
+    ("NON-COMPLIANT", "End cap facing: {brand} promotional display not built. Display shipper received but still in backroom. Vendor promotional credit at risk: ${rev}."),
+    ("NON-COMPLIANT", "{n} facings of discontinued {product} still on shelf. Product delisted effective {date}. No shelf tag."),
+    ("NON-COMPLIANT", "{brand} allocated {n} facings, only {actual} on shelf. Adjacent {other} overfaced into the gap. Backroom check found {cases} cases -- restocked during audit."),
+    ("COMPLIANT", "All {brand} facings correct ({n} facings across {shelves} shelves). Price labels accurate."),
+    ("COMPLIANT", "Brand blocking correct for {brand} family. Facings match planogram. Price accuracy 100%."),
+    ("COMPLIANT", "End cap correctly merchandised with {brand} promotional display. Ad price ${price} verified."),
+    ("OBSERVATION", "Overall aisle cleanliness good. No damaged packages. Shelf labels clean and current."),
+    ("OBSERVATION", "Door {door} gasket showing wear -- slight condensation inside. Flag for preventive maintenance."),
+    ("OBSERVATION", "Shelf tag font size below standard on {n} tags. Readable but should be reprinted at next reset."),
+]
+
+BRANDS = ["General Mills", "Kellogg's", "Frito-Lay", "Coca-Cola", "Pepsi", "Nestle", "Kraft Heinz",
+           "Procter & Gamble", "Unilever", "Mars", "Mondelez", "ConAgra", "Quaker Oats",
+           "DiGiorno", "Totino's", "Bagel Bites", "Hot Pockets", "Ben & Jerry's", "Haagen-Dazs"]
+
+# ---- PDF helpers ----
+def make_pdf():
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 12, itype.upper(), new_x="LMARGIN", new_y="NEXT", align="C")
+    return pdf
+
+def pdf_title(pdf, title):
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(3)
+
+def pdf_field(pdf, label, value):
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 6, f"{label}: {value}", new_x="LMARGIN", new_y="NEXT")
+
+def pdf_section(pdf, title, text):
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, title, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.multi_cell(0, 5, str(text))
+    pdf.ln(3)
+
+def random_date(start_month=3, end_month=8, year=2026):
+    m = random.randint(start_month, end_month)
+    d = random.randint(1, 28)
+    return datetime(year, m, d)
+
+def fmt_date(dt):
+    return dt.strftime("%B %d, %Y")
+
+# ---- Generators ----
+def gen_inspection(store_id, store_loc, dt):
+    pdf = make_pdf()
+    itype = random.choice(["Food Safety & Sanitation Inspection", "Routine Health Department Inspection"])
+    inspector = random.choice(INSPECTORS)
+    n_findings = random.randint(3, 6)
+    findings = random.sample(INSPECTION_FINDINGS_POOL, min(n_findings, len(INSPECTION_FINDINGS_POOL)))
+    
+    overall = random.choice(["PASS", "PASS", "PASS", "CONDITIONAL PASS", "SCORE: {}/100 -- PASS".format(random.randint(85, 98))])
+    
+    pdf_title(pdf, itype.upper())
+    pdf_field(pdf, "Location", f"Store {store_id} -- {store_loc}")
+    pdf_field(pdf, "Inspector", inspector)
+    pdf_field(pdf, "Date", fmt_date(dt))
+    pdf_field(pdf, "Result", overall)
     pdf.ln(4)
-    pdf.set_font("Helvetica", "", 11)
-    for line in [f"Location: {store}", f"Inspector: {inspector}", f"Date: {date}", f"Result: {overall}"]:
-        pdf.cell(0, 7, line, new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(6)
-    pdf.set_font("Helvetica", "B", 13)
+    
+    pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "FINDINGS", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
-    for i, (sev, desc) in enumerate(findings, 1):
+    
+    depts = ["bakery", "deli", "produce", "dairy", "meat"]
+    for i, (sev, desc, action) in enumerate(findings, 1):
+        if pdf.get_y() > 250:
+            pdf.add_page()
+        desc = desc.format(
+            temp=random.randint(42, 48) if "temp" in desc else "",
+            ptemp=random.randint(42, 46),
+            htemp=random.randint(38, 41),
+            dept=random.choice(depts),
+            n=random.randint(2, 5),
+        )
+        action = action if action else ""
         pdf.set_font("Helvetica", "B", 10)
         pdf.cell(0, 6, f"Finding {i} -- [{sev}]", new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "", 10)
         pdf.multi_cell(0, 5, desc)
-        pdf.ln(3)
-    pdf.set_font("Helvetica", "I", 9)
-    pdf.cell(0, 5, "This report is confidential and intended for internal use only.", new_x="LMARGIN", new_y="NEXT")
-    pdf.output(path)
+        if action:
+            if pdf.get_y() > 260:
+                pdf.add_page()
+            pdf.set_x(pdf.l_margin)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.multi_cell(0, 5, f"Corrective: {action}")
+        pdf.ln(2)
+    
+    fname = f"inspection_{store_id.replace('#','')}_{'food_safety' if 'Food' in itype else 'health_dept'}_{dt.strftime('%Y-%m-%d')}.pdf"
+    pdf.output(os.path.join(base, "Inspections", fname))
+    return fname
 
-def make_workorder(path, wo):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, "MAINTENANCE WORK ORDER", new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.ln(2)
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, f"{wo['wo']}  |  Priority: {wo['priority']}  |  Status: {wo['status']}", new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.ln(4)
-    for label, val in [("Location", wo["store"]), ("Date Opened", wo["opened"]), ("Date Closed", wo["closed"]),
-                        ("Category", wo["category"]), ("Equipment", wo["equipment"]),
-                        ("Reported By", wo["reported_by"]), ("Assigned To", wo["assigned_to"])]:
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(40, 6, f"{label}:")
-        pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 6, val)
-        pdf.ln(1)
-    pdf.ln(4)
-    for section, text in [("Problem Description", wo["description"]), ("Resolution", wo["resolution"]), ("Cost", wo["cost"])]:
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, section, new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 5, text)
-        pdf.ln(3)
-    pdf.output(path)
-
-def make_incident(path, inc):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, "STORE INCIDENT REPORT", new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.ln(2)
+def gen_maintenance(store_id, store_loc, dt):
+    pdf = make_pdf()
+    cat = random.choice(list(MAINTENANCE_VENDORS.keys()))
+    vendor = random.choice(MAINTENANCE_VENDORS[cat])
+    equip = random.choice(EQUIPMENT_BY_CATEGORY[cat])
+    priority = random.choice(["EMERGENCY", "HIGH", "HIGH", "MEDIUM", "MEDIUM", "LOW"])
+    wo_num = f"WO-{random.randint(78000, 79999)}"
+    is_open = random.random() < 0.25
+    
+    problems = {
+        "Refrigeration": [
+            f"Unit operating at {random.randint(42,50)}F, exceeding 41F food safety threshold.",
+            "Compressor cycling rapidly. High head pressure fault on display.",
+            "Evaporator coil icing over. Defrost cycle not activating.",
+            "Condenser fan motor failure. Unit running but not cooling.",
+        ],
+        "HVAC": [
+            f"Area ambient temperature reached {random.randint(78,88)}F. RTU running but not cooling.",
+            "Unusual noise from rooftop unit. Vibration felt in ceiling tiles below.",
+            "Thermostat unresponsive. Cannot adjust temperature.",
+            "Exhaust fan belt snapped. Smoke smell in bakery.",
+        ],
+        "Plumbing": [
+            f"Hot water at prep sink measured {random.randint(75,95)}F. Minimum required 110F.",
+            "Floor drain backing up during wash-down. Standing water in prep area.",
+            "Grease trap overflowing. Odor complaint from customers.",
+            "Toilet running continuously in customer restroom.",
+        ],
+        "Electrical": [
+            "Intermittent power flickering in aisle 4-6. Lights and refrigerated cases affected.",
+            "Emergency exit sign dark. Battery backup not charging.",
+            "POS register rebooting randomly. Possible power supply issue.",
+            "Parking lot light pole out. Safety concern for closing crew.",
+        ],
+    }
+    
+    resolutions = {
+        True: "PENDING -- Vendor site visit scheduled. Interim mitigation in place.",
+        False: "Diagnosed and repaired on-site. Verified operational.",
+    }
+    
+    problem = random.choice(problems[cat])
+    cost = f"${random.randint(200, 4500):.2f}" if not is_open else "TBD"
+    close_date = "OPEN" if is_open else fmt_date(dt + timedelta(days=random.randint(0, 3)))
+    
+    pdf_title(pdf, "MAINTENANCE WORK ORDER")
     pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 7, f"Severity: {inc['severity']}", new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.ln(4)
-    for label, val in [("Location", inc["store"]), ("Date/Time", inc["date"]), ("Incident Type", inc["type"]),
-                        ("Reported By", inc["reported_by"]), ("Persons Involved", inc["persons"])]:
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(40, 6, f"{label}:")
-        pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 6, val)
-        pdf.ln(1)
+    pdf.cell(0, 7, f"{wo_num}  |  Priority: {priority}  |  Status: {'OPEN' if is_open else 'CLOSED'}", new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(3)
-    for section, text in [("Incident Description", inc["description"]), ("Immediate Actions Taken", inc["actions"]),
-                           ("Root Cause", inc["root_cause"]), ("Corrective Actions", inc["corrective"])]:
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, section, new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 5, text)
-        pdf.ln(3)
-    pdf.output(path)
+    
+    pdf_field(pdf, "Location", f"Store {store_id} -- {store_loc}")
+    pdf_field(pdf, "Date Opened", fmt_date(dt))
+    pdf_field(pdf, "Date Closed", close_date)
+    pdf_field(pdf, "Category", cat)
+    pdf_field(pdf, "Equipment", equip)
+    pdf_field(pdf, "Assigned To", f"{vendor} -- Tech: {random.choice(['Dave K.','Maria S.','Tom N.','Alex R.','Chris L.'])}")
+    pdf.ln(3)
+    pdf_section(pdf, "Problem Description", problem)
+    pdf_section(pdf, "Resolution", resolutions[is_open])
+    pdf_section(pdf, "Cost", cost)
+    
+    fname = f"wo_{wo_num.replace('WO-','')}_{cat.lower()}_{store_id.replace('#','')}_{dt.strftime('%Y-%m-%d')}.pdf"
+    pdf.output(os.path.join(base, "Maintenance", fname))
+    return fname
 
-def make_planogram(path, p):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, "PLANOGRAM COMPLIANCE AUDIT", new_x="LMARGIN", new_y="NEXT", align="C")
+def gen_incident(store_id, store_loc, dt):
+    pdf = make_pdf()
+    template = random.choice(INCIDENT_TYPES)
+    
+    causes = ["wet floor near produce wet rack", "spilled liquid in beverage aisle", "ice buildup near frozen cases",
+              "loose floor mat at entrance", "recently mopped floor in deli"]
+    locations = ["produce section", "beverage aisle", "frozen food aisle", "front entrance", "deli counter area"]
+    injuries = ["hip pain", "wrist pain", "knee pain", "back pain", "shoulder pain"]
+    
+    desc = template["desc"].format(
+        cause=random.choice(causes), location=random.choice(locations),
+        injury=random.choice(injuries), outcome="Customer declined ambulance. Provided incident form.",
+        doors=f"doors {random.randint(14,22)}-{random.randint(23,28)}",
+        temp=random.randint(22, 32), shift=random.choice(["overnight stocking", "morning prep", "afternoon peak"]),
+        compressor=f"Compressor rack #{random.randint(1,3)}", fault="high discharge pressure fault",
+        area=f"aisles {random.randint(1,5)}-{random.randint(6,10)}", duration=f"{random.randint(1,4)} hours",
+        items=random.choice(["cosmetics", "electronics", "meat products", "spirits"]),
+        method=random.choice(["a bag", "clothing", "a backpack"]),
+        apprehended=random.choice(["Subject not apprehended.", "Subject detained by LP until police arrival."]),
+        name=random.choice(["J. Martinez", "K. Johnson", "R. Patel", "S. Williams"]),
+        activity=random.choice(["stacking cases", "lifting pallet", "unloading truck"]),
+        dept=random.choice(["grocery backroom", "dairy cooler", "receiving dock"]),
+        treatment=random.choice(["Ice applied. Associate returned to light duty.", "Sent to urgent care for evaluation."]),
+        case=random.randint(20260001, 20269999),
+        motor_issue="Condenser fan motor failure caused high head pressure and thermal overload",
+        cost=random.randint(200, 5000),
+    )
+    root = template["root"].format(
+        cause_detail=random.choice(["Floor mat not properly secured", "Spill not cleaned within 5-minute SOP", "Misting nozzle overspray"]),
+        contributing=random.choice(["Mat replacement overdue", "Hourly floor checks not completed", "Wet floor sign not placed"]),
+        motor_issue="Condenser fan motor failure", doors=f"doors {random.randint(14,22)}-{random.randint(23,28)}",
+        location=random.choice(["self-checkout area", "cosmetics aisle", "entrance vestibule"]),
+        case=random.randint(20260001, 20269999),
+    )
+    corrective = template["corrective"].format(
+        fix1=random.choice(["Floor mats replaced with anti-slip backed mats", "Spill cleanup SOP re-trained", "Camera coverage expanded"]),
+        fix2=random.choice(["Hourly floor checks added to shift checklist", "Wet floor sign inventory increased", "LP staffing adjusted for peak hours"]),
+        cost=random.randint(200, 5000), case=random.randint(20260001, 20269999),
+    )
+    
+    pdf_title(pdf, "STORE INCIDENT REPORT")
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, f"Severity: {template['severity']}", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(3)
+    
+    pdf_field(pdf, "Location", f"Store {store_id} -- {store_loc}")
+    pdf_field(pdf, "Date/Time", f"{fmt_date(dt)}, {random.randint(6,22)}:{random.choice(['00','15','30','45'])} {'AM' if random.random() < 0.4 else 'PM'}")
+    pdf_field(pdf, "Incident Type", template["type"])
+    pdf_field(pdf, "Reported By", random.choice(["Front End Supervisor", "Night Crew Lead", "Store Manager", "Loss Prevention Associate", "Department Manager"]))
+    pdf.ln(3)
+    pdf_section(pdf, "Incident Description", desc)
+    pdf_section(pdf, "Root Cause", root)
+    pdf_section(pdf, "Corrective Actions", corrective)
+    
+    safe_type = template["type"].split(" -- ")[0].lower().replace(" ", "_").replace("&", "and")
+    fname = f"incident_{store_id.replace('#','')}_{dt.strftime('%Y-%m-%d')}_{safe_type}.pdf"
+    pdf.output(os.path.join(base, "Incidents", fname))
+    return fname
+
+def gen_planogram(store_id, store_loc, dt):
+    pdf = make_pdf()
+    dept, plano_id = random.choice(PLANO_DEPARTMENTS)
+    auditor = random.choice(MERCH_AUDITORS)
+    compliance = random.randint(65, 98)
+    n_findings = random.randint(4, 7)
+    findings = random.choices(PLANO_FINDINGS_POOL, k=n_findings)
+    
+    pdf_title(pdf, "PLANOGRAM COMPLIANCE AUDIT")
+    pdf_field(pdf, "Store", f"Store {store_id} -- {store_loc}")
+    pdf_field(pdf, "Auditor", auditor)
+    pdf_field(pdf, "Audit Date", fmt_date(dt))
+    pdf_field(pdf, "Department", dept)
+    pdf_field(pdf, "Planogram", plano_id)
+    pdf_field(pdf, "Compliance", f"{compliance}%")
     pdf.ln(4)
-    for label, val in [("Store", p["store"]), ("Auditor", p["auditor"]), ("Audit Date", p["date"]),
-                        ("Department", p["department"]), ("Planogram", p["planogram"]), ("Overall Compliance", p["compliance"])]:
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(40, 6, f"{label}:")
-        pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 6, val)
-        pdf.ln(1)
-    pdf.ln(4)
+    
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "FINDINGS", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
-    for i, (status, desc) in enumerate(p["findings"], 1):
+    
+    for i, (status, desc_tmpl) in enumerate(findings, 1):
+        if pdf.get_y() > 250:
+            pdf.add_page()
+        desc = desc_tmpl.format(
+            shelf=random.randint(1, 5), pos=f"{random.randint(1,8)}-{random.randint(9,12)}",
+            brand=random.choice(BRANDS), rev=random.randint(80, 500),
+            n=random.randint(2, 6), actual=random.randint(1, 2),
+            other=random.choice(BRANDS), cases=random.randint(1, 4),
+            product=f"{random.choice(BRANDS)} {random.choice(['Variety Pack','Family Size','Original','Lite'])}",
+            date=f"{random.randint(1,6)}/15", shelves=random.randint(1, 3),
+            price=f"{random.randint(2,8)}.{random.choice(['49','99','79','29'])}",
+            door=random.randint(14, 22),
+        )
         pdf.set_font("Helvetica", "B", 10)
         pdf.cell(0, 6, f"{i}. [{status}]", new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "", 10)
         pdf.multi_cell(0, 5, desc)
-        pdf.ln(3)
-    pdf.output(path)
+        pdf.ln(2)
+    
+    safe_dept = dept.split(" -- ")[0].lower().replace(" ", "_").replace("&", "and")
+    fname = f"planogram_{store_id.replace('#','')}_{safe_dept}_{dt.strftime('%Y-%m-%d')}.pdf"
+    pdf.output(os.path.join(base, "Planograms", fname))
+    return fname
 
-# === INSPECTIONS ===
-make_inspection(
-    os.path.join(base, "Inspections", "food_safety_inspection_store_4421_2026-07-15.pdf"),
-    "Store #4421 -- Maple Grove, MN", "Sarah Chen, Certified Food Safety Inspector",
-    "July 15, 2026", "Food Safety & Sanitation Inspection", "CONDITIONAL PASS",
-    [("Critical", "Walk-in cooler #2 operating at 44F -- exceeds 41F threshold. Three cases of deli meat measured at 43F internal temp. Corrective: Unit serviced same day by Refrigeration Solutions Inc. Temp verified at 38F by 4:30 PM."),
-     ("Major", "Prep sink in bakery department lacks hot water supply. Measured at 87F; minimum required 110F. Water heater inspection scheduled for 7/17."),
-     ("Minor", "Two ceiling tiles above produce wet rack show water staining. No active leak observed. Facilities notified."),
-     ("Minor", "Employee handwash log for deli incomplete -- 3 of 7 shifts missing signatures week of 7/8."),
-     ("Observation", "Excellent FIFO rotation observed in dairy cooler. All date labels current and legible.")])
+# ---- Main ----
+def main():
+    # Clean and recreate
+    for folder in ["Inspections", "Maintenance", "Incidents", "Planograms"]:
+        path = os.path.join(base, folder)
+        if os.path.exists(path):
+            shutil.rmtree(path)
+        os.makedirs(path, exist_ok=True)
+    
+    for folder in ["Inspections", "Incidents"]:
+        path = os.path.join(live, folder)
+        if os.path.exists(path):
+            shutil.rmtree(path)
+        os.makedirs(path, exist_ok=True)
 
-make_inspection(
-    os.path.join(base, "Inspections", "food_safety_inspection_store_5102_2026-07-22.pdf"),
-    "Store #5102 -- Eden Prairie, MN", "Marcus Rivera, Certified Food Safety Inspector",
-    "July 22, 2026", "Food Safety & Sanitation Inspection", "PASS",
-    [("Minor", "Deli slicer #3 blade guard has minor chip on edge. Does not contact food surface but should be replaced at next maintenance cycle."),
-     ("Minor", "Floor drain in meat processing room slow to clear. Cleared with enzyme treatment during inspection. Schedule preventive drain service."),
-     ("Observation", "Excellent pest control documentation. Quarterly Terminix reports filed and current through Q2 FY26."),
-     ("Observation", "All cold-hold units within spec. Lowest reading 33F (frozen), highest 39F (dairy reach-in).")])
+    counts = {"Inspections": 0, "Maintenance": 0, "Incidents": 0, "Planograms": 0}
+    
+    for store_id, store_loc in STORES:
+        # Each store gets 2-3 inspections over 6 months
+        for _ in range(random.randint(2, 3)):
+            dt = random_date()
+            gen_inspection(store_id, store_loc, dt)
+            counts["Inspections"] += 1
+        
+        # Each store gets 2-4 maintenance work orders
+        for _ in range(random.randint(2, 4)):
+            dt = random_date()
+            gen_maintenance(store_id, store_loc, dt)
+            counts["Maintenance"] += 1
+        
+        # Each store gets 0-2 incidents (not every store has incidents)
+        for _ in range(random.randint(0, 2)):
+            dt = random_date()
+            gen_incident(store_id, store_loc, dt)
+            counts["Incidents"] += 1
+        
+        # Each store gets 1-2 planogram audits
+        for _ in range(random.randint(1, 2)):
+            dt = random_date()
+            gen_planogram(store_id, store_loc, dt)
+            counts["Planograms"] += 1
 
-make_inspection(
-    os.path.join(base, "Inspections", "health_dept_inspection_store_3287_2026-08-05.pdf"),
-    "Store #3287 -- Bloomington, MN", "Hennepin County Health Department -- Inspector J. Kowalski, Badge #1847",
-    "August 5, 2026", "Routine Health Department Inspection", "SCORE: 91/100 -- PASS",
-    [("Violation 3-501.16", "Hot-hold soup bar measured at 128F at 2:15 PM. Minimum 135F required. Two soup varieties discarded and replenished. Staff re-trained on hot-hold monitoring at shift change."),
-     ("Violation 4-601.11", "Residue observed on interior surfaces of ice machine in bakery. Machine taken out of service, sanitized, and returned to operation at 3:40 PM."),
-     ("Compliant", "All food handler permits current. 47 of 47 associates verified."),
-     ("Compliant", "Chemical storage properly separated from food storage in all observed areas."),
-     ("Compliant", "Allergen labeling on all prepared foods items verified accurate and legible.")])
+    # Live demo docs -- follow-up inspection for store #4421
+    pdf = make_pdf()
+    pdf_title(pdf, "FOOD SAFETY & SANITATION INSPECTION")
+    pdf_field(pdf, "Location", "Store #4421 -- Maple Grove, MN")
+    pdf_field(pdf, "Inspector", "Sarah Chen, Certified Food Safety Inspector")
+    pdf_field(pdf, "Date", "September 15, 2026")
+    pdf_field(pdf, "Result", "PASS")
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "FINDINGS", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    for i, (sev, desc) in enumerate([
+        ("Minor", "Walk-in cooler #2 operating at 37F -- well within spec. Previous repair verified effective."),
+        ("Minor", "Bakery prep sink hot water now measuring 122F -- compliant after water heater replacement."),
+        ("Observation", "All corrective actions from previous inspection verified complete."),
+        ("Observation", "New produce area floor mats with anti-slip backing in place. No wet conditions observed."),
+    ], 1):
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(0, 6, f"Finding {i} -- [{sev}]", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 10)
+        pdf.multi_cell(0, 5, desc)
+        pdf.ln(2)
+    pdf.output(os.path.join(live, "Inspections", "inspection_4421_food_safety_2026-09-15.pdf"))
 
-print("3 inspections")
+    # Live demo -- refrigeration incident for store #4421
+    pdf = make_pdf()
+    pdf_title(pdf, "STORE INCIDENT REPORT")
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, "Severity: HIGH -- refrigeration failure with $3,200 product loss", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(3)
+    pdf_field(pdf, "Location", "Store #4421 -- Maple Grove, MN")
+    pdf_field(pdf, "Date/Time", "September 18, 2026, 11:30 PM")
+    pdf_field(pdf, "Incident Type", "Equipment Failure -- Refrigeration")
+    pdf_field(pdf, "Reported By", "Night Crew Lead -- Alex Kim")
+    pdf.ln(3)
+    pdf_section(pdf, "Incident Description", "Frozen food cases doors 20-24 found at 28F during overnight stocking. Product partially thawed. Compressor rack #2 alarming -- high discharge pressure fault. 200+ units of frozen product affected.")
+    pdf_section(pdf, "Root Cause", "Condenser fan motor failure on compressor rack #2. Fan motor bearings seized. Backup unit offline for scheduled maintenance.")
+    pdf_section(pdf, "Corrective Actions", "1) Emergency fan motor replacement completed at 3:15 AM. 2) Cases restored to -5F by 6:00 AM. 3) $3,200 in product discarded. 4) PM schedule under review -- two refrigeration failures in 30 days at this store.")
+    pdf.output(os.path.join(live, "Incidents", "incident_4421_2026-09-18_equipment_failure.pdf"))
 
-# === MAINTENANCE WORK ORDERS ===
-make_workorder(os.path.join(base, "Maintenance", "wo_78432_refrigeration_store_4421_2026-07-15.pdf"), {
-    "wo": "WO-78432", "store": "Store #4421 -- Maple Grove, MN", "opened": "July 15, 2026", "closed": "July 15, 2026",
-    "priority": "EMERGENCY", "status": "CLOSED", "category": "Refrigeration",
-    "equipment": "Walk-in Cooler #2 (Hussmann IRL-0608, Serial: HRL2019-44218)",
-    "reported_by": "Sarah Chen (Food Safety Inspector -- triggered by inspection finding)",
-    "assigned_to": "Refrigeration Solutions Inc. -- Tech: Dave Kowalski",
-    "description": "Walk-in cooler #2 operating at 44F, exceeding 41F food safety threshold. Deli meat product measured at 43F internal. Immediate service required per food safety protocol.",
-    "resolution": "Diagnosed failed evaporator fan motor (part #EFM-2247). Replaced on-site from service truck inventory. Verified unit cooling to 36F within 90 minutes. All product above 41F discarded per food safety SOP. Estimated product loss: $847.",
-    "cost": "$1,247.00 (labor: $400, parts: $289, product loss: $847)"})
+    total = sum(counts.values())
+    print(f"Generated {total} seed documents:")
+    for k, v in counts.items():
+        print(f"  {k}: {v}")
+    print(f"\nGenerated 2 live demo documents")
+    print(f"\nTotal: {total + 2}")
 
-make_workorder(os.path.join(base, "Maintenance", "wo_78501_hvac_store_5102_2026-07-18.pdf"), {
-    "wo": "WO-78501", "store": "Store #5102 -- Eden Prairie, MN", "opened": "July 18, 2026", "closed": "July 21, 2026",
-    "priority": "HIGH", "status": "CLOSED -- follow-up scheduled September", "category": "HVAC",
-    "equipment": "Rooftop Unit #3 (Carrier 48TM, Serial: CAR2021-99103) -- serves bakery/deli",
-    "reported_by": "Tom Nguyen, Store Manager", "assigned_to": "Comfort Systems USA -- Tech: Maria Santos",
-    "description": "Bakery area ambient temperature reached 82F at 1 PM. RTU #3 running but not cooling. Product quality concern for cake decorating and chocolate displays.",
-    "resolution": "Found refrigerant charge low -- 4 lbs R-410A below spec. Located and repaired pinhole leak in condenser coil joint. Recharged system. Verified bakery ambient at 72F after 3 hours. Recommended condenser coil replacement at next scheduled maintenance window (September).",
-    "cost": "$2,180.00 (labor: $960, parts: $120, refrigerant: $340, leak detection: $760)"})
-
-make_workorder(os.path.join(base, "Maintenance", "wo_78623_plumbing_store_3287_2026-07-28.pdf"), {
-    "wo": "WO-78623", "store": "Store #3287 -- Bloomington, MN", "opened": "July 28, 2026", "closed": "OPEN",
-    "priority": "MEDIUM", "status": "OPEN", "category": "Plumbing",
-    "equipment": "Bakery prep sink (Advance Tabco FC-3-1620, install date 2019)",
-    "reported_by": "Health Dept Inspection finding -- hot water below minimum",
-    "assigned_to": "Roto-Rooter Commercial -- awaiting scheduling",
-    "description": "Hot water at bakery prep sink measured 87F. Minimum required 110F for handwash / equipment sanitation. Point-of-use water heater suspected. Flagged during health department inspection 8/5.",
-    "resolution": "PENDING -- Vendor site visit scheduled for 8/8. Interim mitigation: portable hot water dispenser placed at station.",
-    "cost": "TBD"})
-
-print("3 work orders")
-
-# === INCIDENTS ===
-make_incident(os.path.join(base, "Incidents", "incident_store_4421_2026-07-20_slip_fall.pdf"), {
-    "store": "Store #4421 -- Maple Grove, MN", "date": "July 20, 2026, 2:35 PM",
-    "type": "Customer Slip & Fall", "reported_by": "Jessica Pham, Front End Supervisor",
-    "persons": "Customer: Margaret Olsen (age ~65). Witness: Employee Carlos Mendez (badge #4421-087).",
-    "severity": "MODERATE -- medical attention sought, no fracture",
-    "description": "Customer slipped on wet floor near produce wet rack. Floor mat had shifted, exposing wet tile. Customer fell onto right side, complained of hip pain. Customer was alert and oriented. Declined ambulance but requested help to her vehicle.",
-    "actions": "1) Area cordoned off immediately. 2) Wet floor signs placed. 3) Floor mat repositioned and secured. 4) Photos taken of area. 5) Customer provided incident form and store manager business card. 6) Customer's daughter called store at 4:15 PM -- customer went to Urgent Care, X-ray negative, diagnosed with bruised hip.",
-    "root_cause": "Floor mat not properly secured with anti-slip backing. Produce wet rack misting cycle creates overspray that reaches aisle when mat is displaced. Mat replacement overdue -- current mat purchased 2023.",
-    "corrective": "1) All produce area mats replaced with anti-slip backed mats (completed 7/21, cost $340). 2) Wet rack misting nozzles adjusted to reduce overspray. 3) Produce team briefed on hourly floor checks."})
-
-make_incident(os.path.join(base, "Incidents", "incident_store_3287_2026-08-01_equipment.pdf"), {
-    "store": "Store #3287 -- Bloomington, MN", "date": "August 1, 2026, 6:15 AM",
-    "type": "Equipment Failure -- Power Outage", "reported_by": "Kevin Park, Opening Manager",
-    "persons": "Store opening crew (4 associates). No injuries.",
-    "severity": "LOW -- no product loss, no injuries, power restored within SLA",
-    "description": "Main electrical panel tripped at approximately 5:50 AM, cutting power to refrigerated cases in grocery aisles 3-7 (dairy, frozen, beverages). Backup generator activated for walk-in coolers and freezers but does not cover floor cases. Power restored by Xcel Energy at 7:45 AM. Total outage: ~2 hours.",
-    "actions": "1) Verified backup generator running for walk-ins -- all walk-in temps held. 2) Spot-checked frozen case temps at 6:15 AM: -2F to 8F (acceptable). 3) Dairy reach-in temps: 38F to 44F -- borderline. 4) Placed do-not-stock holds on dairy cases until temps recovered. 5) Called Xcel Energy at 6:00 AM. 6) Temps verified recovered by 9:00 AM.",
-    "root_cause": "Xcel Energy transformer failure on distribution line. Not within store control. However, backup generator scope does not include floor-level refrigerated cases -- known gap in emergency power plan.",
-    "corrective": "1) Filed claim with Xcel Energy. 2) Submitted capital request for expanded generator capacity ($18,000 estimate). 3) Updated store emergency SOP to include temp monitoring checklist for power events."})
-
-print("2 incidents")
-
-# === PLANOGRAMS ===
-make_planogram(os.path.join(base, "Planograms", "planogram_audit_store_4421_cereal_2026-07-25.pdf"), {
-    "store": "Store #4421 -- Maple Grove, MN", "auditor": "Regional Merchandising -- Lisa Tran",
-    "date": "July 25, 2026", "department": "Grocery -- Cereal Aisle (Aisle 6)",
-    "planogram": "PLN-2026-Q3-CRL-v2 (effective 7/1/2026)", "compliance": "78%",
-    "findings": [
-        ("NON-COMPLIANT", "Shelf 3, Position 4-6: Store brand granola placed in position allocated to General Mills Nature Valley. Lost premium placement revenue estimated $120/week."),
-        ("NON-COMPLIANT", "End cap facing: Kellogg's promotional display (Back-to-School) not built. Display shipper received 7/10 but still in backroom. Vendor promotional credit at risk: $500."),
-        ("NON-COMPLIANT", "Shelf 5 (bottom): 4 facings of discontinued Malt-O-Meal Berry Colossal Crunch still on shelf. Product delisted effective 6/15. No shelf tag."),
-        ("COMPLIANT", "Top shelf power wing correctly merchandised with Quaker Oats seasonal oatmeal packets. Price point $4.99 verified."),
-        ("COMPLIANT", "Shelf 1-2 brand blocking (General Mills family) correct. Facings match planogram. Price accuracy 100%."),
-        ("OBSERVATION", "Overall aisle cleanliness good. No damaged packages. Shelf labels clean and current except for the delisted item.")]})
-
-make_planogram(os.path.join(base, "Planograms", "planogram_audit_store_5102_frozen_2026-08-02.pdf"), {
-    "store": "Store #5102 -- Eden Prairie, MN", "auditor": "Regional Merchandising -- Lisa Tran",
-    "date": "August 2, 2026", "department": "Frozen Foods -- Pizza / Snacks (Doors 14-18)",
-    "planogram": "PLN-2026-Q3-FZP-v1 (effective 7/1/2026)", "compliance": "92%",
-    "findings": [
-        ("NON-COMPLIANT", "Door 16, shelf 2: DiGiorno Rising Crust Pepperoni allocated 3 facings, only 1 on shelf. Adjacent Tombstone overfaced into the gap. Backroom check found 2 cases -- restocked during audit."),
-        ("COMPLIANT", "All Totino's Party Pizza facings correct (8 facings across 2 shelves). Price labels accurate."),
-        ("COMPLIANT", "Hot Pockets / Lean Pockets section properly blocked by brand. New Lean Pockets Chicken Jalapeno SKU added per planogram update."),
-        ("COMPLIANT", "Frozen snacks end cap (Door 14) correctly merchandised with Bagel Bites promotional display. Ad price $3.99 verified."),
-        ("OBSERVATION", "Door 17 gasket showing wear -- slight condensation inside. Not affecting product but should be flagged for preventive maintenance.")]})
-
-print("2 planograms")
-
-# === LIVE DEMO DOCS ===
-make_inspection(
-    os.path.join(live, "Inspections", "food_safety_inspection_store_4421_2026-08-12.pdf"),
-    "Store #4421 -- Maple Grove, MN", "Sarah Chen, Certified Food Safety Inspector",
-    "August 12, 2026", "Food Safety & Sanitation Inspection", "PASS",
-    [("Minor", "Walk-in cooler #2 (repaired 7/15) operating at 37F -- well within spec. Repair verified effective."),
-     ("Minor", "Bakery prep sink hot water now measuring 122F -- compliant after water heater replacement (WO-78623)."),
-     ("Observation", "All corrective actions from 7/15 inspection verified complete. Handwash logs current and complete across all departments."),
-     ("Observation", "New produce area floor mats with anti-slip backing in place. No wet floor conditions observed during 45-minute walkthrough.")])
-
-make_incident(os.path.join(live, "Incidents", "incident_store_4421_2026-08-14_refrigeration.pdf"), {
-    "store": "Store #4421 -- Maple Grove, MN", "date": "August 14, 2026, 11:30 PM",
-    "type": "Refrigeration Failure -- Frozen Cases", "reported_by": "Night Crew Lead -- Alex Kim",
-    "persons": "Night stocking crew (6 associates). No injuries.",
-    "severity": "HIGH -- refrigeration failure with $3,200 product loss",
-    "description": "Frozen food cases in aisle 8 (doors 20-24) found at 28F during overnight stocking at 11:30 PM. Product partially thawed. Compressor rack #2 alarming -- high discharge pressure fault. Estimated 200+ units of frozen product affected across ice cream, frozen vegetables, and frozen meals.",
-    "actions": "1) All affected product pulled and staged in walk-in freezer. 2) Emergency maintenance call placed at 11:45 PM. 3) Cases powered down to prevent compressor damage. 4) Product temp log started every 30 min. 5) Store manager notified at 11:50 PM.",
-    "root_cause": "Condenser fan motor failure on compressor rack #2 caused high head pressure and thermal overload. Fan motor bearings seized. Same rack services frozen cases 20-24 and backup unit was offline for scheduled maintenance.",
-    "corrective": "1) Emergency fan motor replacement completed at 3:15 AM 8/15. 2) Cases restored to -5F by 6:00 AM. 3) $3,200 in frozen product discarded. 4) Backup unit maintenance expedited. 5) Facilities to review PM schedule -- two refrigeration failures in 30 days at store #4421."})
-
-print("2 live demo docs")
-print("\nDone! All store ops documents generated.")
+if __name__ == "__main__":
+    main()
