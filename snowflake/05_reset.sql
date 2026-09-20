@@ -1,31 +1,32 @@
 /* =============================================================================
    05_reset.sql — reset the AI layer, keep connector data
    -----------------------------------------------------------------------------
-   Run as OPENFLOW_DEMO_ADMIN. Safe to run repeatedly.
+   Run as OF_SHAREPOINT_ADMIN. Safe to run repeatedly.
 
    DROPS: DOC_CLASSIFY_RAW, DOC_EXTRACT_RAW, all dynamic tables, all tasks
    KEEPS: DOC_METADATA, DOCUMENTS stage, ACL tables — no re-ingest needed
+
+   After this, re-run 04_ai_pipeline.sql.
    ============================================================================= */
 
-USE ROLE OPENFLOW_DEMO_ADMIN;
-USE DATABASE OPENFLOW_DEMO;
-USE SCHEMA SHAREPOINT_DOCS;
-USE WAREHOUSE OPENFLOW_DEMO_INGEST_WH;
+USE ROLE OF_SHAREPOINT_ADMIN;
+USE DATABASE OF_SHAREPOINT;
+USE SCHEMA DOCS;
+USE WAREHOUSE OF_SHAREPOINT_INGEST_WH;
 
 /* Reassert grants on connector-owned objects */
 USE ROLE ACCOUNTADMIN;
-GRANT SELECT ON ALL TABLES    IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS TO ROLE OPENFLOW_DEMO_ADMIN;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS TO ROLE OPENFLOW_DEMO_ADMIN;
-GRANT READ ON STAGE OPENFLOW_DEMO.SHAREPOINT_DOCS.DOCUMENTS           TO ROLE OPENFLOW_DEMO_ADMIN;
-USE ROLE OPENFLOW_DEMO_ADMIN;
+GRANT SELECT ON ALL TABLES IN SCHEMA OF_SHAREPOINT.DOCS TO ROLE OF_SHAREPOINT_ADMIN;
+GRANT READ ON STAGE OF_SHAREPOINT.DOCS.DOCUMENTS        TO ROLE OF_SHAREPOINT_ADMIN;
+USE ROLE OF_SHAREPOINT_ADMIN;
 
 /* Sanity check */
 SELECT COUNT(*) AS DOCS_INGESTED FROM DOC_METADATA;
 
-/* Tear down our objects — suspend root task first (children auto-suspend) */
+/* Suspend root task (children auto-suspend) */
 ALTER TASK IF EXISTS TASK_CLASSIFY_DOCS SUSPEND;
 
-/* Drop child tasks before root */
+/* Drop children first */
 DROP TASK IF EXISTS TASK_EXTRACT_INSPECTIONS;
 DROP TASK IF EXISTS TASK_EXTRACT_MAINTENANCE;
 DROP TASK IF EXISTS TASK_EXTRACT_INCIDENTS;
@@ -41,5 +42,3 @@ DROP DYNAMIC TABLE IF EXISTS PLANOGRAM_FINDINGS;
 /* Raw tables */
 DROP ICEBERG TABLE IF EXISTS DOC_EXTRACT_RAW;
 DROP ICEBERG TABLE IF EXISTS DOC_CLASSIFY_RAW;
-
-/* Now re-run 04_ai_pipeline.sql */

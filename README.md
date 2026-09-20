@@ -27,10 +27,10 @@ sharepoint/
 
 snowflake/
 ├── 00_account_setup.sql    Roles + privileges
-├── 01_demo_objects.sql     OPENFLOW_DEMO database, warehouses, Iceberg settings
+├── 01_demo_objects.sql     OF_SHAREPOINT database, warehouses, Iceberg settings
 ├── 02_openflow_deployment.sql  Gen 2 deployment, EAI, runtime (SQL)
 ├── 03_connector_grants.sql     Grants for the runtime role
-├── 04_ai_pipeline.sql      AI classify + extract task, 4 dynamic tables
+├── 04_ai_pipeline.sql      AI classify + extract tasks, 4 dynamic tables
 ├── 05_reset.sql            Rebuild AI layer, keep ingested docs
 └── 99_teardown.sql         Drop everything
 
@@ -42,24 +42,34 @@ keys/                       cert.pem + key.pem (gitignored)
 
 ## Snowflake objects created
 
+**Roles** (2 only — fully self-contained, no shared global roles)
+
+- `OF_SHAREPOINT_ADMIN` — owns everything
+- `OF_SHAREPOINT_RUNTIME_ROLE` — execute-as identity for the Openflow runtime
+
 **Infrastructure**
 
-- `OPENFLOW_DEMO` — Database (Iceberg-enabled, Snowflake-managed storage)
-- `SHAREPOINT_DOCS` — Schema for all connector + AI objects
-- `OPENFLOW` — Schema for gen 2 deployment + runtime objects
-- `OPENFLOW_DEMO_WH` — Warehouse (XS) for interactive queries
-- `OPENFLOW_DEMO_INGEST_WH` — Warehouse (S) for connector + AI_EXTRACT
-- `EAI_OPENFLOW_SHAREPOINT` — External access integration (egress to M365)
+- `OF_SHAREPOINT` — Database (Iceberg-enabled, Snowflake-managed storage)
+- `DOCS` — Schema for connector + AI objects
+- `OPENFLOW` — Schema for gen 2 deployment + runtime
+- `OF_SHAREPOINT_WH` — Warehouse (XS) for interactive queries
+- `OF_SHAREPOINT_INGEST_WH` — Warehouse (S) for connector + AI_EXTRACT
+- `OF_SHAREPOINT_EAI` — External access integration (egress to M365)
 
 **Openflow**
 
-- `OPENFLOW_DEMO_DEPLOYMENT` — Gen 2 deployment
-- `OPENFLOW_DEMO_RUNTIME` — Runtime (Small/S1, 1 node)
+- `OF_SHAREPOINT_DEPLOYMENT` — Gen 2 deployment
+- `OF_SHAREPOINT_RUNTIME` — Runtime (Small/S1, 1 node)
 
 **AI pipeline**
 
-- `DOC_EXTRACT_RAW` — Iceberg table: raw AI_CLASSIFY + AI_EXTRACT output
-- `TASK_CLASSIFY_AND_EXTRACT` — Task (every 2 min): anti-join classify + extract new docs
+- `DOC_CLASSIFY_RAW` — Iceberg table: AI_CLASSIFY output
+- `DOC_EXTRACT_RAW` — Iceberg table: AI_EXTRACT output
+- `TASK_CLASSIFY_DOCS` — Root task (every 2 min)
+- `TASK_EXTRACT_INSPECTIONS` — Child task
+- `TASK_EXTRACT_MAINTENANCE` — Child task
+- `TASK_EXTRACT_INCIDENTS` — Child task
+- `TASK_EXTRACT_PLANOGRAMS` — Child task
 
 **Structured output (dynamic Iceberg tables)**
 

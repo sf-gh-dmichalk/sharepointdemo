@@ -1,113 +1,76 @@
 /* =============================================================================
-   01_demo_objects.sql — warehouses, database, schemas, grants
+   01_demo_objects.sql — database, warehouses, schemas
    -----------------------------------------------------------------------------
-   Run as SYSADMIN (which 00_account_setup.sql put above both custom roles).
-
-   Ownership model:
-     SYSADMIN              creates the database and warehouses
-     OPENFLOW_DEMO_ADMIN   receives ownership, then creates schemas and objects
-
-   The database-level Iceberg settings are load-bearing: the Openflow
-   SharePoint connector READS them at runtime to decide where Iceberg files go.
-   Getting them wrong means a full connector reset.
+   SYSADMIN creates, then hands ownership to OF_SHAREPOINT_ADMIN.
    ============================================================================= */
 
 USE ROLE SYSADMIN;
 
-/* -----------------------------------------------------------------------------
-   STEP 1 — Warehouses
-   -------------------------------------------------------------------------- */
-CREATE WAREHOUSE IF NOT EXISTS OPENFLOW_DEMO_WH
-    WAREHOUSE_SIZE = 'XSMALL'
-    AUTO_SUSPEND   = 60
-    AUTO_RESUME    = TRUE
+/* --- Warehouses --- */
+CREATE WAREHOUSE IF NOT EXISTS OF_SHAREPOINT_WH
+    WAREHOUSE_SIZE      = 'XSMALL'
+    AUTO_SUSPEND        = 60
+    AUTO_RESUME         = TRUE
     INITIALLY_SUSPENDED = TRUE
-    COMMENT = 'Interactive querying and verification during the demo';
+    COMMENT = 'Interactive queries for the SharePoint demo';
 
-CREATE WAREHOUSE IF NOT EXISTS OPENFLOW_DEMO_INGEST_WH
-    WAREHOUSE_SIZE = 'SMALL'
-    AUTO_SUSPEND   = 60
-    AUTO_RESUME    = TRUE
+CREATE WAREHOUSE IF NOT EXISTS OF_SHAREPOINT_INGEST_WH
+    WAREHOUSE_SIZE      = 'SMALL'
+    AUTO_SUSPEND        = 60
+    AUTO_RESUME         = TRUE
     INITIALLY_SUSPENDED = TRUE
-    COMMENT = 'Openflow connector and AI_EXTRACT task. '
-           || 'Deliberately small: AI_EXTRACT gains nothing above MEDIUM.';
+    COMMENT = 'Openflow connector + AI_EXTRACT. Small on purpose.';
 
-/* -----------------------------------------------------------------------------
-   STEP 2 — Database, with Iceberg defaults
+/* --- Database (Iceberg-enabled) --- */
+CREATE DATABASE IF NOT EXISTS OF_SHAREPOINT
+    COMMENT = 'SharePoint Openflow store ops demo';
 
-   EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED' is a RESERVED VALUE, not an object you
-   create. No CREATE EXTERNAL VOLUME, no Azure consent, no IAM role assignment.
+/* --- Hand ownership --- */
+GRANT OWNERSHIP ON DATABASE  OF_SHAREPOINT           TO ROLE OF_SHAREPOINT_ADMIN COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON WAREHOUSE OF_SHAREPOINT_WH        TO ROLE OF_SHAREPOINT_ADMIN COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON WAREHOUSE OF_SHAREPOINT_INGEST_WH TO ROLE OF_SHAREPOINT_ADMIN COPY CURRENT GRANTS;
 
-   STORAGE_SERIALIZATION_POLICY = COMPATIBLE produces Parquet that external
-   engines can read.
+/* --- Iceberg settings (as owner) --- */
+USE ROLE OF_SHAREPOINT_ADMIN;
 
-   Do NOT set CATALOG at the database level. The Openflow connector sets
-   CATALOG = 'SNOWFLAKE' on every CREATE ICEBERG TABLE it issues.
-   -------------------------------------------------------------------------- */
-CREATE DATABASE IF NOT EXISTS OPENFLOW_DEMO
-    COMMENT = 'SharePoint Openflow ingestion demo';
-
-/* -----------------------------------------------------------------------------
-   STEP 3 — Hand ownership to the demo role
-   -------------------------------------------------------------------------- */
-GRANT OWNERSHIP ON DATABASE OPENFLOW_DEMO
-    TO ROLE OPENFLOW_DEMO_ADMIN COPY CURRENT GRANTS;
-
-GRANT OWNERSHIP ON WAREHOUSE OPENFLOW_DEMO_WH
-    TO ROLE OPENFLOW_DEMO_ADMIN COPY CURRENT GRANTS;
-
-GRANT OWNERSHIP ON WAREHOUSE OPENFLOW_DEMO_INGEST_WH
-    TO ROLE OPENFLOW_DEMO_ADMIN COPY CURRENT GRANTS;
-
-/* -----------------------------------------------------------------------------
-   STEP 4 — Everything below runs as the owning role
-   -------------------------------------------------------------------------- */
-USE ROLE OPENFLOW_DEMO_ADMIN;
-
-ALTER DATABASE OPENFLOW_DEMO SET
+ALTER DATABASE OF_SHAREPOINT SET
     EXTERNAL_VOLUME              = 'SNOWFLAKE_MANAGED'
     STORAGE_SERIALIZATION_POLICY = COMPATIBLE
     ICEBERG_VERSION_DEFAULT      = 3;
 
-USE DATABASE OPENFLOW_DEMO;
+USE DATABASE OF_SHAREPOINT;
 
-/* -----------------------------------------------------------------------------
-   STEP 5 — Schemas
-   -------------------------------------------------------------------------- */
-CREATE SCHEMA IF NOT EXISTS SHAREPOINT_DOCS
-    COMMENT = 'Openflow SharePoint documents, ACLs, AI extraction';
+/* --- Schemas --- */
+CREATE SCHEMA IF NOT EXISTS DOCS
+    COMMENT = 'SharePoint documents, ACLs, AI extraction, structured output';
 
-CREATE SCHEMA IF NOT EXISTS OBSERVABILITY
-    COMMENT = 'Event table, alerts, and monitoring';
+CREATE SCHEMA IF NOT EXISTS OPENFLOW
+    COMMENT = 'Gen 2 Openflow deployment + runtime objects';
 
 DROP SCHEMA IF EXISTS PUBLIC;
 
-/* -----------------------------------------------------------------------------
-   STEP 6 — Verify
-   -------------------------------------------------------------------------- */
-SHOW PARAMETERS LIKE 'EXTERNAL_VOLUME'              IN DATABASE OPENFLOW_DEMO;
-SHOW PARAMETERS LIKE 'STORAGE_SERIALIZATION_POLICY' IN DATABASE OPENFLOW_DEMO;
-SHOW PARAMETERS LIKE 'ICEBERG_VERSION_DEFAULT'      IN DATABASE OPENFLOW_DEMO;
+/* --- Grant runtime role access --- */
+GRANT USAGE ON DATABASE OF_SHAREPOINT TO ROLE OF_SHAREPOINT_RUNTIME_ROLE;
 
-SHOW SCHEMAS IN DATABASE OPENFLOW_DEMO;
-SHOW WAREHOUSES LIKE 'OPENFLOW_DEMO%';
+GRANT USAGE ON SCHEMA OF_SHAREPOINT.DOCS TO ROLE OF_SHAREPOINT_RUNTIME_ROLE;
+GRANT CREATE TABLE, CREATE DYNAMIC TABLE, CREATE STAGE, CREATE SEQUENCE,
+      CREATE CORTEX SEARCH SERVICE
+    ON SCHEMA OF_SHAREPOINT.DOCS TO ROLE OF_SHAREPOINT_RUNTIME_ROLE;
 
-/* Smoke-test Snowflake-managed Iceberg */
-CREATE OR REPLACE ICEBERG TABLE OPENFLOW_DEMO.OBSERVABILITY.ICEBERG_SMOKE_TEST (
-    ID   INT,
-    NOTE STRING,
-    BLOB VARIANT
-)
-    CATALOG         = 'SNOWFLAKE'
-    EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED'
-    ICEBERG_VERSION = 3;
+GRANT USAGE, OPERATE ON WAREHOUSE OF_SHAREPOINT_INGEST_WH
+    TO ROLE OF_SHAREPOINT_RUNTIME_ROLE;
 
-INSERT INTO OPENFLOW_DEMO.OBSERVABILITY.ICEBERG_SMOKE_TEST
-    SELECT 1, 'iceberg v3 ok', PARSE_JSON('{"variant":"works"}');
+GRANT USAGE ON SCHEMA OF_SHAREPOINT.OPENFLOW TO ROLE OF_SHAREPOINT_RUNTIME_ROLE;
 
-SELECT * FROM OPENFLOW_DEMO.OBSERVABILITY.ICEBERG_SMOKE_TEST;
+/* --- FUTURE TABLES so we can SELECT on connector-created objects --- */
+USE ROLE ACCOUNTADMIN;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA OF_SHAREPOINT.DOCS
+    TO ROLE OF_SHAREPOINT_ADMIN;
+USE ROLE OF_SHAREPOINT_ADMIN;
 
-SHOW PARAMETERS LIKE 'ICEBERG_VERSION'
-    IN TABLE OPENFLOW_DEMO.OBSERVABILITY.ICEBERG_SMOKE_TEST;
-
-DROP TABLE OPENFLOW_DEMO.OBSERVABILITY.ICEBERG_SMOKE_TEST;
+/* --- Verify --- */
+SHOW PARAMETERS LIKE 'EXTERNAL_VOLUME'              IN DATABASE OF_SHAREPOINT;
+SHOW PARAMETERS LIKE 'STORAGE_SERIALIZATION_POLICY' IN DATABASE OF_SHAREPOINT;
+SHOW PARAMETERS LIKE 'ICEBERG_VERSION_DEFAULT'      IN DATABASE OF_SHAREPOINT;
+SHOW SCHEMAS IN DATABASE OF_SHAREPOINT;
+SHOW WAREHOUSES LIKE 'OF_SHAREPOINT%';
