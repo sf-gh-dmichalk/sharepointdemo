@@ -12,12 +12,16 @@ $PnPClientId = '6868ac5b-6e83-4918-8ca8-1cecbf42ceaa'
 $List        = 'Documents'
 $LibraryPath = 'Shared Documents'
 
-# Group -> members. Retail store ops roles.
+# Group -> members. Each group gets your real user so the connector resolves
+# actual emails in PERMS_GROUPS. The fake role addresses are kept as secondary
+# members — they'll warn on add (user not found) but the group still works.
+$MyUser = 'dmichalk@oceancloudtech.com'
+
 $Groups = [ordered]@{
-    'StoreOps-Management'  = @('storemgr@oceancloudtech.com')
-    'StoreOps-Facilities'  = @('facilities@oceancloudtech.com')
-    'StoreOps-Safety'      = @('safety@oceancloudtech.com')
-    'StoreOps-Merchandising' = @('merch@oceancloudtech.com')
+    'StoreOps-Management'    = @($MyUser, 'storemgr@oceancloudtech.com')
+    'StoreOps-Facilities'    = @($MyUser, 'facilities@oceancloudtech.com')
+    'StoreOps-Safety'        = @($MyUser, 'safety@oceancloudtech.com')
+    'StoreOps-Merchandising' = @($MyUser, 'merch@oceancloudtech.com')
 }
 
 # Folder -> groups. First group breaks inheritance; rest are added on top.
