@@ -1,9 +1,9 @@
 /* =============================================================================
-   03_reset.sql — reset the AI layer, keep connector data
+   05_reset.sql — reset the AI layer, keep connector data
    -----------------------------------------------------------------------------
    Run as OPENFLOW_DEMO_ADMIN. Safe to run repeatedly.
 
-   DROPS: DOC_EXTRACT_RAW, all dynamic tables, the task
+   DROPS: DOC_CLASSIFY_RAW, DOC_EXTRACT_RAW, all dynamic tables, all tasks
    KEEPS: DOC_METADATA, DOCUMENTS stage, ACL tables — no re-ingest needed
    ============================================================================= */
 
@@ -22,13 +22,24 @@ USE ROLE OPENFLOW_DEMO_ADMIN;
 /* Sanity check */
 SELECT COUNT(*) AS DOCS_INGESTED FROM DOC_METADATA;
 
-/* Tear down our objects, dependents first */
-ALTER TASK IF EXISTS TASK_CLASSIFY_AND_EXTRACT SUSPEND;
-DROP TASK          IF EXISTS TASK_CLASSIFY_AND_EXTRACT;
+/* Tear down our objects — suspend root task first (children auto-suspend) */
+ALTER TASK IF EXISTS TASK_CLASSIFY_DOCS SUSPEND;
+
+/* Drop child tasks before root */
+DROP TASK IF EXISTS TASK_EXTRACT_INSPECTIONS;
+DROP TASK IF EXISTS TASK_EXTRACT_MAINTENANCE;
+DROP TASK IF EXISTS TASK_EXTRACT_INCIDENTS;
+DROP TASK IF EXISTS TASK_EXTRACT_PLANOGRAMS;
+DROP TASK IF EXISTS TASK_CLASSIFY_DOCS;
+
+/* Dynamic tables */
 DROP DYNAMIC TABLE IF EXISTS INSPECTION_FINDINGS;
 DROP DYNAMIC TABLE IF EXISTS MAINTENANCE_ORDERS;
 DROP DYNAMIC TABLE IF EXISTS INCIDENT_REPORTS;
 DROP DYNAMIC TABLE IF EXISTS PLANOGRAM_FINDINGS;
-DROP ICEBERG TABLE IF EXISTS DOC_EXTRACT_RAW;
 
-/* Now re-run 02_sharepoint_connector.sql from PART 2 onward */
+/* Raw tables */
+DROP ICEBERG TABLE IF EXISTS DOC_EXTRACT_RAW;
+DROP ICEBERG TABLE IF EXISTS DOC_CLASSIFY_RAW;
+
+/* Now re-run 04_ai_pipeline.sql */

@@ -1,10 +1,14 @@
 /* =============================================================================
-   02_connector_grants.sql — Run BEFORE starting the Openflow connector
+   03_connector_grants.sql — Run BEFORE starting the Openflow connector
    -----------------------------------------------------------------------------
    Run as OPENFLOW_DEMO_ADMIN.
 
    Grants so the Openflow SharePoint connector can create its objects
    (stage, DOC_METADATA, ACL tables) in the SHAREPOINT_DOCS schema.
+
+   The reverse grants (connector objects back to us) and the verification
+   queries are in 04_ai_pipeline.sql — they can only run AFTER the connector
+   has created the stage and DOC_METADATA table.
    ============================================================================= */
 
 USE ROLE OPENFLOW_DEMO_ADMIN;
@@ -30,21 +34,10 @@ GRANT CREATE TABLE,
 GRANT USAGE, OPERATE ON WAREHOUSE OPENFLOW_DEMO_INGEST_WH
     TO ROLE OPENFLOW_RUNTIME_ROLE_OPENFLOW_DEMO_RUNTIME;
 
-/* Grants BACK to us — without these, tasks fail silently.
-
-   The connector creates DOC_METADATA and the DOCUMENTS stage as the runtime
-   role, so it OWNS them. OPENFLOW_DEMO_ADMIN owns the schema but that conveys
-   nothing over objects another role created inside it. FUTURE TABLES covers
-   anything the connector adds later. */
+/* FUTURE TABLES grant so we can SELECT on anything the connector creates */
 USE ROLE ACCOUNTADMIN;
-
-GRANT SELECT ON ALL TABLES    IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS
-    TO ROLE OPENFLOW_DEMO_ADMIN;
 GRANT SELECT ON FUTURE TABLES IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS
     TO ROLE OPENFLOW_DEMO_ADMIN;
-GRANT READ ON STAGE OPENFLOW_DEMO.SHAREPOINT_DOCS.DOCUMENTS
-    TO ROLE OPENFLOW_DEMO_ADMIN;
-
 USE ROLE OPENFLOW_DEMO_ADMIN;
 
 /* -----------------------------------------------------------------------------
@@ -79,12 +72,6 @@ USE ROLE OPENFLOW_DEMO_ADMIN;
      Incidents/     — slip/fall, equipment failure, theft
      Planograms/    — shelf compliance audits
 
-   NOW: start the connector in Openflow UI, wait for 10 rows in DOC_METADATA,
-   then run 03_ai_pipeline.sql.
+   NOW: install + start the connector in Openflow UI.
+   Wait for 10 rows in DOC_METADATA, then run 04_ai_pipeline.sql.
    -------------------------------------------------------------------------- */
-
-/* Verify after connector's first run: */
-SHOW STAGES IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS;
-SHOW TABLES IN SCHEMA OPENFLOW_DEMO.SHAREPOINT_DOCS;
-SELECT COUNT(*) FROM DOC_METADATA;
-SELECT FILE_ID, FILE_NAME FROM DOC_METADATA ORDER BY FILE_NAME;
