@@ -32,9 +32,8 @@ GRANT ROLE OF_SHAREPOINT_RUNTIME_ROLE TO USER DMICHALK;
 /* --- Account-level privileges for the admin role --- */
 USE ROLE ACCOUNTADMIN;
 
--- Openflow
-GRANT CREATE OPENFLOW DEPLOYMENT ON ACCOUNT TO ROLE OF_SHAREPOINT_ADMIN;
-GRANT CREATE COMPUTE POOL        ON ACCOUNT TO ROLE OF_SHAREPOINT_ADMIN;
+-- Openflow (deployment is on OPENFLOW_ADMIN — shared across demos)
+GRANT CREATE COMPUTE POOL ON ACCOUNT TO ROLE OF_SHAREPOINT_ADMIN;
 
 -- Database + warehouse (SYSADMIN creates, then hands ownership)
 -- No account-level CREATE DATABASE grant needed — SYSADMIN does it in 01.
