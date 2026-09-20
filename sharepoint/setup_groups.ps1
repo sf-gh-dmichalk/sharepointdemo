@@ -14,7 +14,7 @@ $LibraryPath = 'Shared Documents'
 
 # Group -> members. Your real user in every group so the connector resolves
 # actual emails in PERMS_GROUPS.
-$MyUser = 'dmichalk@oceancloudtech.com'
+$MyUser = 'dale@oceancloudtech.com'
 
 $Groups = [ordered]@{
     'StoreOps-Management'    = @($MyUser)
