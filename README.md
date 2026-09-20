@@ -42,22 +42,31 @@ keys/                       cert.pem + key.pem (gitignored)
 
 ## Snowflake objects created
 
-| Object | Type | Purpose |
-|--------|------|---------|
-| `OPENFLOW_DEMO` | Database | Iceberg-enabled, Snowflake-managed storage |
-| `SHAREPOINT_DOCS` | Schema | All connector + AI objects |
-| `OPENFLOW` | Schema | Gen 2 deployment + runtime objects |
-| `OPENFLOW_DEMO_WH` | Warehouse (XS) | Interactive queries |
-| `OPENFLOW_DEMO_INGEST_WH` | Warehouse (S) | Connector + AI_EXTRACT |
-| `DOC_EXTRACT_RAW` | Iceberg table | Raw AI_CLASSIFY + AI_EXTRACT output |
-| `INSPECTION_FINDINGS` | Dynamic Iceberg table | One row per inspection finding |
-| `MAINTENANCE_ORDERS` | Dynamic Iceberg table | One row per work order |
-| `INCIDENT_REPORTS` | Dynamic Iceberg table | One row per incident |
-| `PLANOGRAM_FINDINGS` | Dynamic Iceberg table | One row per planogram finding |
-| `TASK_CLASSIFY_AND_EXTRACT` | Task (2 min) | Anti-join: classify + extract new docs |
-| `OPENFLOW_DEMO_DEPLOYMENT` | Openflow deployment | Gen 2 |
-| `OPENFLOW_DEMO_RUNTIME` | Openflow runtime | Small/S1, 1 node |
-| `EAI_OPENFLOW_SHAREPOINT` | External access integration | Egress to M365 |
+**Infrastructure**
+
+- `OPENFLOW_DEMO` — Database (Iceberg-enabled, Snowflake-managed storage)
+- `SHAREPOINT_DOCS` — Schema for all connector + AI objects
+- `OPENFLOW` — Schema for gen 2 deployment + runtime objects
+- `OPENFLOW_DEMO_WH` — Warehouse (XS) for interactive queries
+- `OPENFLOW_DEMO_INGEST_WH` — Warehouse (S) for connector + AI_EXTRACT
+- `EAI_OPENFLOW_SHAREPOINT` — External access integration (egress to M365)
+
+**Openflow**
+
+- `OPENFLOW_DEMO_DEPLOYMENT` — Gen 2 deployment
+- `OPENFLOW_DEMO_RUNTIME` — Runtime (Small/S1, 1 node)
+
+**AI pipeline**
+
+- `DOC_EXTRACT_RAW` — Iceberg table: raw AI_CLASSIFY + AI_EXTRACT output
+- `TASK_CLASSIFY_AND_EXTRACT` — Task (every 2 min): anti-join classify + extract new docs
+
+**Structured output (dynamic Iceberg tables)**
+
+- `INSPECTION_FINDINGS` — One row per inspection finding
+- `MAINTENANCE_ORDERS` — One row per work order
+- `INCIDENT_REPORTS` — One row per incident
+- `PLANOGRAM_FINDINGS` — One row per planogram finding
 
 ## Cortex AI features used
 
