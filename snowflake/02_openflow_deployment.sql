@@ -77,7 +77,7 @@ CREATE OPENFLOW RUNTIME IF NOT EXISTS OPENFLOW_DEMO.OPENFLOW.OPENFLOW_DEMO_RUNTI
 
 /* Wait for the runtime to come up (typically 3-5 min) */
 SELECT SYSTEM$WAIT_FOR_OPENFLOW_RUNTIME_STATUS(
-    'OPENFLOW_DEMO.OPENFLOW.OPENFLOW_DEMO_RUNTIME', 'ACTIVE', 600);
+    600, 'ACTIVE', 'OPENFLOW_DEMO.OPENFLOW.OPENFLOW_DEMO_RUNTIME');
 
 /* -----------------------------------------------------------------------------
    STEP 5 — Verify
