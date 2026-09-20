@@ -46,7 +46,9 @@ GRANT CREATE OPENFLOW RUNTIME INTEGRATION    ON ACCOUNT TO ROLE OPENFLOW_ADMIN;
 GRANT CREATE COMPUTE POOL                    ON ACCOUNT TO ROLE OPENFLOW_ADMIN;
 GRANT CREATE ROLE                            ON ACCOUNT TO ROLE OPENFLOW_ADMIN;
 
-GRANT APPLICATION ROLE SNOWFLAKE.OPENFLOW_ADMIN TO ROLE OPENFLOW_ADMIN;
+-- GRANT APPLICATION ROLE SNOWFLAKE.OPENFLOW_ADMIN TO ROLE OPENFLOW_ADMIN;
+-- ^ Only exists on accounts where Openflow is provisioned as a managed app.
+--   Skip if it errors — the account-level OPENFLOW_ADMIN role is sufficient.
 
 /* -----------------------------------------------------------------------------
    STEP 3 — Integration privileges for the demo admin
