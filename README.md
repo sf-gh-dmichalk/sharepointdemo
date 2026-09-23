@@ -192,7 +192,7 @@ SELECT PARSE_JSON(
 ### Step 8: Semantic view + Cortex Agent
 
 ```
-snowflake/06_agent.sql
+snowflake/05_agent.sql
 ```
 
 Creates:
@@ -236,7 +236,7 @@ Within ~7 minutes it appears classified, extracted, and structured. Zero-touch.
 
 ## Reset and teardown
 
-**`05_reset.sql`** — Drops the AI layer (tasks, dynamic tables, raw tables, `STORE_OPS_SEARCH`), keeps connector data and `CORTEX_SEARCH_SERVICE` intact. Re-run `04_ai_pipeline.sql` to rebuild.
+**`07_reset.sql`** — Drops the AI layer (tasks, dynamic tables, raw tables, `STORE_OPS_SEARCH`, agent, semantic view), keeps connector data and `CORTEX_SEARCH_SERVICE` intact. Re-run `04_ai_pipeline.sql` and `05_agent.sql` to rebuild.
 
 **`99_teardown.sql`** — Drops everything demo-specific. Stop and delete the connector in the Openflow UI first. Run statements one at a time — runtime must be suspended → terminated → dropped before the database. The shared `OF_DEPLOYMENT` is left in place.
 
@@ -268,9 +268,9 @@ snowflake/
 ├── 02_openflow_deployment.sql  Shared deployment + demo runtime
 ├── 03_connector_grants.sql     Runtime role grants
 ├── 04_ai_pipeline.sql      AI classify/extract tasks + dynamic tables + Cortex Search
-├── 05_reset.sql            Rebuild AI layer only
-├── 06_agent.sql            Semantic view + Cortex Agent
+├── 05_agent.sql            Semantic view + Cortex Agent
 ├── store_ops_analytics.sv.yaml  Semantic view YAML source
+├── 07_reset.sql            Rebuild AI layer only
 └── 99_teardown.sql         Drop everything (except shared deployment)
 
 tools/
