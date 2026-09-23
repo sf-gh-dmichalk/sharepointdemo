@@ -3,15 +3,21 @@
    -----------------------------------------------------------------------------
    Run as OF_SHAREPOINT_ADMIN.
 
-   STEP 0: Post-connector grants (stage + tables back to us)
-   STEP 1: Verify connector landed docs
-   STEP 2: DOC_CLASSIFY_RAW — classification landing table
-   STEP 3: TASK_CLASSIFY_DOCS — AI_CLASSIFY task
-   STEP 4: DOC_EXTRACT_RAW — extraction landing table
-   STEP 5: 4 extraction tasks — one per doc type, each with its own schema
-   STEP 6: 4 dynamic Iceberg tables — structured output
+   The Cortex Connect connector creates:
+     DOCS_CHUNKS          — chunked + OCR'd text per document
+     DOCUMENTS stage      — raw PDFs keyed by SharePoint doc ID
+     FILE_HASHES          — maps DOC_ID to stage file path
+     CORTEX_SEARCH_SERVICE — ACL-aware Cortex Search over raw chunks
 
-   Requires DOC_METADATA and the DOCUMENTS stage (connector creates them).
+   This script adds structured extraction on top:
+     STEP 0: Post-connector grants
+     STEP 1: Verify connector output
+     STEP 2: DOC_CLASSIFY_RAW — classification landing table
+     STEP 3: TASK_CLASSIFY_DOCS — AI_CLASSIFY task
+     STEP 4: DOC_EXTRACT_RAW — extraction landing table
+     STEP 5: 4 extraction tasks — one per doc type
+     STEP 6: 4 dynamic Iceberg tables — structured output
+     STEP 7: STORE_OPS_SEARCH — Cortex Search over structured findings
    ============================================================================= */
 
 USE ROLE OF_SHAREPOINT_ADMIN;
@@ -22,12 +28,14 @@ USE WAREHOUSE OF_SHAREPOINT_WH;
 /* =============================================================================
    STEP 0 — Post-connector grants
 
-   The connector owns DOC_METADATA and the DOCUMENTS stage. Without these
-   grants our tasks fail silently (no secondary roles in task context).
+   The connector owns tables and the DOCUMENTS stage. Without these grants
+   our tasks fail silently (no secondary roles in task context).
    ============================================================================= */
 USE ROLE ACCOUNTADMIN;
 
 GRANT SELECT ON ALL TABLES IN SCHEMA OF_SHAREPOINT.DOCS
+    TO ROLE OF_SHAREPOINT_ADMIN;
+GRANT SELECT ON ALL DYNAMIC TABLES IN SCHEMA OF_SHAREPOINT.DOCS
     TO ROLE OF_SHAREPOINT_ADMIN;
 GRANT READ ON STAGE OF_SHAREPOINT.DOCS.DOCUMENTS
     TO ROLE OF_SHAREPOINT_ADMIN;
@@ -39,14 +47,17 @@ USE ROLE OF_SHAREPOINT_ADMIN;
    ============================================================================= */
 SHOW STAGES IN SCHEMA OF_SHAREPOINT.DOCS;
 SHOW TABLES IN SCHEMA OF_SHAREPOINT.DOCS;
-SELECT COUNT(*) AS DOCS_INGESTED FROM DOC_METADATA;
-SELECT FILE_ID, FILE_NAME FROM DOC_METADATA ORDER BY FILE_NAME;
 
-ALTER STAGE DOCUMENTS SET DIRECTORY = (ENABLE = TRUE);
-ALTER STAGE DOCUMENTS REFRESH;
+SELECT COUNT(*) AS STAGE_FILES FROM DIRECTORY('@DOCUMENTS');
+SELECT COUNT(DISTINCT METADATA:id::STRING) AS CHUNKED_DOCS FROM DOCS_CHUNKS;
+SELECT COUNT(*) AS FILE_HASHES FROM FILE_HASHES;
 
 /* =============================================================================
    STEP 2 — Classification table
+
+   FILE_ID  = SharePoint doc ID (e.g. 01F5IH3H7MTMF6...)
+   FILE_NAME = original filename from METADATA:fullName
+   STAGED_FILE_PATH = path in DOCUMENTS stage (FILE_HASHES.DOC_ID)
    ============================================================================= */
 CREATE OR REPLACE ICEBERG TABLE DOC_CLASSIFY_RAW (
     FILE_ID        STRING,
@@ -64,6 +75,7 @@ CREATE OR REPLACE ICEBERG TABLE DOC_CLASSIFY_RAW (
 /* =============================================================================
    STEP 3 — Classification task (every 2 min)
 
+   Joins DOCS_CHUNKS (distinct docs) to FILE_HASHES (stage path).
    Anti-join: only classifies docs not yet in DOC_CLASSIFY_RAW.
    ============================================================================= */
 CREATE OR REPLACE TASK TASK_CLASSIFY_DOCS
@@ -73,9 +85,9 @@ CREATE OR REPLACE TASK TASK_CLASSIFY_DOCS
 AS
 INSERT INTO DOC_CLASSIFY_RAW (FILE_ID, FILE_NAME, STAGED_FILE_PATH, DOC_TYPE, CLASSIFY_LABEL, CLASSIFY_TS)
 SELECT
-    m.FILE_ID,
-    m.FILE_NAME,
-    m.STAGED_FILE_PATH,
+    FILE_ID,
+    FILE_NAME,
+    STAGED_FILE_PATH,
     CASE label
         WHEN 'Inspection Report'       THEN 'INSPECTION'
         WHEN 'Maintenance Work Order'  THEN 'MAINTENANCE'
@@ -87,16 +99,24 @@ SELECT
     CURRENT_TIMESTAMP()::TIMESTAMP_NTZ(6)
 FROM (
     SELECT
-        m.FILE_ID,
-        m.FILE_NAME,
-        m.STAGED_FILE_PATH,
+        FILE_ID,
+        FILE_NAME,
+        STAGED_FILE_PATH,
         AI_CLASSIFY(
-            TO_FILE('@DOCUMENTS', m.STAGED_FILE_PATH),
+            TO_FILE('@DOCUMENTS', STAGED_FILE_PATH),
             ['Inspection Report', 'Maintenance Work Order', 'Incident Report', 'Planogram Audit'],
             {'task_description': 'Classify retail store operations documents by type'}
-        ):label::STRING AS label
-    FROM DOC_METADATA m
-    WHERE NOT EXISTS (SELECT 1 FROM DOC_CLASSIFY_RAW c WHERE c.FILE_ID = m.FILE_ID)
+        ):labels[0]::STRING AS label
+    FROM (
+        SELECT DISTINCT
+            c.METADATA:id::STRING AS FILE_ID,
+            REGEXP_SUBSTR(c.METADATA:fullName::STRING, '[^/]+$') AS FILE_NAME,
+            REGEXP_REPLACE(h.DOC_ID, '-', '_', 1, 1) AS STAGED_FILE_PATH
+        FROM DOCS_CHUNKS c
+        JOIN FILE_HASHES h
+          ON h.DOC_ID LIKE c.METADATA:id::STRING || '%'
+    )
+    WHERE NOT EXISTS (SELECT 1 FROM DOC_CLASSIFY_RAW cr WHERE cr.FILE_ID = FILE_ID)
 ) sub;
 
 ALTER TASK TASK_CLASSIFY_DOCS RESUME;
@@ -133,7 +153,6 @@ CREATE OR REPLACE ICEBERG TABLE DOC_EXTRACT_RAW (
 CREATE OR REPLACE TASK TASK_EXTRACT_INSPECTIONS
     WAREHOUSE = OF_SHAREPOINT_WH
     AFTER TASK_CLASSIFY_DOCS
-    COMMENT   = 'Extract structured fields from inspection reports'
 AS
 INSERT INTO DOC_EXTRACT_RAW (FILE_ID, FILE_NAME, RELATIVE_PATH, DOC_TYPE, EXTRACTED, SCORES, EXTRACT_ERROR, MODEL_VERSION, EXTRACT_TS)
 SELECT
@@ -176,7 +195,6 @@ ALTER TASK TASK_EXTRACT_INSPECTIONS RESUME;
 CREATE OR REPLACE TASK TASK_EXTRACT_MAINTENANCE
     WAREHOUSE = OF_SHAREPOINT_WH
     AFTER TASK_CLASSIFY_DOCS
-    COMMENT   = 'Extract structured fields from maintenance work orders'
 AS
 INSERT INTO DOC_EXTRACT_RAW (FILE_ID, FILE_NAME, RELATIVE_PATH, DOC_TYPE, EXTRACTED, SCORES, EXTRACT_ERROR, MODEL_VERSION, EXTRACT_TS)
 SELECT
@@ -215,7 +233,6 @@ ALTER TASK TASK_EXTRACT_MAINTENANCE RESUME;
 CREATE OR REPLACE TASK TASK_EXTRACT_INCIDENTS
     WAREHOUSE = OF_SHAREPOINT_WH
     AFTER TASK_CLASSIFY_DOCS
-    COMMENT   = 'Extract structured fields from incident reports'
 AS
 INSERT INTO DOC_EXTRACT_RAW (FILE_ID, FILE_NAME, RELATIVE_PATH, DOC_TYPE, EXTRACTED, SCORES, EXTRACT_ERROR, MODEL_VERSION, EXTRACT_TS)
 SELECT
@@ -252,7 +269,6 @@ ALTER TASK TASK_EXTRACT_INCIDENTS RESUME;
 CREATE OR REPLACE TASK TASK_EXTRACT_PLANOGRAMS
     WAREHOUSE = OF_SHAREPOINT_WH
     AFTER TASK_CLASSIFY_DOCS
-    COMMENT   = 'Extract structured fields from planogram audits'
 AS
 INSERT INTO DOC_EXTRACT_RAW (FILE_ID, FILE_NAME, RELATIVE_PATH, DOC_TYPE, EXTRACTED, SCORES, EXTRACT_ERROR, MODEL_VERSION, EXTRACT_TS)
 SELECT
@@ -400,13 +416,12 @@ SELECT
 
 
 /* =============================================================================
-   STEP 7 — Cortex Search: natural language search over all store ops docs
+   STEP 7 — Cortex Search: structured findings search
 
-   Combines all 4 document types into one searchable corpus. Indexed on the
-   finding/description text with store, type, and severity as filterable
-   attributes. Powers RAG queries and can back a Cortex Agent.
-
-   TARGET_LAG = 1 hour is fine for a demo — the dynamic tables feed it.
+   The connector already creates CORTEX_SEARCH_SERVICE for raw document
+   search with ACL filtering. This additional service indexes the structured
+   extraction output — store numbers, doc types, severity levels, and
+   finding descriptions from the dynamic tables.
    ============================================================================= */
 
 CREATE OR REPLACE CORTEX SEARCH SERVICE STORE_OPS_SEARCH
@@ -414,7 +429,7 @@ CREATE OR REPLACE CORTEX SEARCH SERVICE STORE_OPS_SEARCH
     ATTRIBUTES store_number, doc_type, severity
     WAREHOUSE = OF_SHAREPOINT_WH
     TARGET_LAG = '1 hour'
-    COMMENT = 'Hybrid search over all store ops findings — powers RAG and agents'
+    COMMENT = 'Hybrid search over structured store ops findings'
 AS (
     /* Inspections */
     SELECT
@@ -468,6 +483,19 @@ AS (
    VERIFICATION
    ============================================================================= */
 
+/* --- Connector's built-in Cortex Search (raw docs + ACLs) --- */
+SELECT PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'OF_SHAREPOINT.DOCS.CORTEX_SEARCH_SERVICE',
+        '{
+            "query": "refrigeration issues",
+            "columns": ["full_name", "chunk"],
+            "filter": {"@contains": {"user_emails": "dale@oceancloudtech.com"}},
+            "limit": 3
+        }'
+    )
+)['results'] AS results;
+
 /* --- Task health --- */
 SELECT SCHEDULED_TIME, STATE, ERROR_CODE, ERROR_MESSAGE
   FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(TASK_NAME => 'TASK_CLASSIFY_DOCS'))
@@ -502,7 +530,7 @@ SELECT DISTINCT i.STORE_NUMBER, i.SEVERITY, i.FINDING_DESCRIPTION, m.WO_NUMBER, 
  WHERE i.SEVERITY IN ('Critical', 'Major', 'Violation 3-501.16', 'Violation 4-601.11')
    AND m.STATUS = 'OPEN';
 
-/* --- Cortex Search: natural language queries --- */
+/* --- Structured findings search (STORE_OPS_SEARCH) --- */
 SELECT PARSE_JSON(
     SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
         'OF_SHAREPOINT.DOCS.STORE_OPS_SEARCH',

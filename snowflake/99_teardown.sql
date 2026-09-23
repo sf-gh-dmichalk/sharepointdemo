@@ -5,7 +5,8 @@
    are already gone. Every statement uses IF EXISTS or is wrapped to tolerate
    missing objects.
 
-   STEP 0 (MANUAL): Stop and delete the SharePoint connector in Openflow UI.
+   STEP 0 (MANUAL): Stop and delete the Microsoft SharePoint (Cortex Connect)
+   connector in the Openflow UI.
    ============================================================================= */
 
 USE ROLE OF_SHAREPOINT_ADMIN;
@@ -29,8 +30,13 @@ DROP DYNAMIC TABLE IF EXISTS DOCS.PLANOGRAM_FINDINGS;
 DROP ICEBERG TABLE IF EXISTS DOCS.DOC_EXTRACT_RAW;
 DROP ICEBERG TABLE IF EXISTS DOCS.DOC_CLASSIFY_RAW;
 
-/* --- Cortex Search --- */
+/* --- Agent + semantic view --- */
+DROP CORTEX AGENT IF EXISTS DOCS.STORE_OPS_AGENT;
+DROP SEMANTIC VIEW IF EXISTS DOCS.STORE_OPS_ANALYTICS;
+
+/* --- Cortex Search (structured findings + connector's built-in) --- */
 DROP CORTEX SEARCH SERVICE IF EXISTS DOCS.STORE_OPS_SEARCH;
+DROP CORTEX SEARCH SERVICE IF EXISTS DOCS.CORTEX_SEARCH_SERVICE;
 
 /* --- Openflow runtime: suspend → terminate → drop ---
    Run these one at a time. Skip any that error with "does not exist".
