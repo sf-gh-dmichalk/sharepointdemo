@@ -202,27 +202,38 @@ Creates:
   - **Analyst** (semantic view) — for analytical questions that need SQL ("which stores have the most critical findings")
   - **Search** (connector's `CORTEX_SEARCH_SERVICE`) — for raw document retrieval with ACLs ("what did the inspector say about refrigeration at store 4421")
 
+> **Cortex Agent gotcha — default role & warehouse:**
+> Cortex Agents ignores your session role and warehouse. It always uses your user's **DEFAULT_ROLE** and **DEFAULT_WAREHOUSE**. The default role must have USAGE on the agent, its database/schema, and a warehouse — and the default warehouse must be one that role can actually use. The script handles this with grants to `OPENFLOW_ADMIN` and an `ALTER USER CURRENT_USER() SET DEFAULT_WAREHOUSE` statement. If you hit _"missing an execution environment"_ errors, check `DESC USER <you>` and verify the default role has USAGE on the default warehouse.
+
 **Test the agent:**
 
 ```sql
--- Analytical question (routes to Analyst → SQL):
-SELECT SNOWFLAKE.CORTEX.AGENT(
-    'OF_SHAREPOINT.DOCS.STORE_OPS_AGENT',
-    'Which stores have the most critical inspection findings?'
-);
+SELECT TRY_PARSE_JSON(
+    SNOWFLAKE.CORTEX.DATA_AGENT_RUN(
+        'OF_SHAREPOINT.DOCS.STORE_OPS_AGENT',
+        '{"messages":[{"role":"user","content":[{"type":"text","text":"Which stores have the most critical inspection findings?"}]}]}',
+        TRUE
+    )
+) AS resp;
 
--- Document question (routes to Search → chunks):
-SELECT SNOWFLAKE.CORTEX.AGENT(
-    'OF_SHAREPOINT.DOCS.STORE_OPS_AGENT',
-    'What did the inspector find about refrigeration at store #4421?'
-);
+SELECT TRY_PARSE_JSON(
+    SNOWFLAKE.CORTEX.DATA_AGENT_RUN(
+        'OF_SHAREPOINT.DOCS.STORE_OPS_AGENT',
+        '{"messages":[{"role":"user","content":[{"type":"text","text":"What did the inspector find about refrigeration at store #4421?"}]}]}',
+        TRUE
+    )
+) AS resp;
 
--- Cross-document question (uses both tools):
-SELECT SNOWFLAKE.CORTEX.AGENT(
-    'OF_SHAREPOINT.DOCS.STORE_OPS_AGENT',
-    'What is going on at store #4421?'
-);
+SELECT TRY_PARSE_JSON(
+    SNOWFLAKE.CORTEX.DATA_AGENT_RUN(
+        'OF_SHAREPOINT.DOCS.STORE_OPS_AGENT',
+        '{"messages":[{"role":"user","content":[{"type":"text","text":"What is going on at store #4421?"}]}]}',
+        TRUE
+    )
+) AS resp;
 ```
+
+Or test in the Snowsight agent playground: **AI & ML → Agents → Store Ops Agent**.
 
 ### Step 9: Live demo
 
