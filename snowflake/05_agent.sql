@@ -14,6 +14,10 @@
    The agent can answer both:
      "which stores have the most critical findings"   → Analyst → SQL
      "what does the inspection say about store 4421"  → Search → chunks
+
+   NOTE: Cortex Agents resolves permissions from the caller's DEFAULT ROLE
+   and DEFAULT WAREHOUSE — not the session role/warehouse.  The caller's
+   default role must have USAGE on the agent and a default warehouse set.
    ============================================================================= */
 
 USE ROLE OF_SHAREPOINT_ADMIN;
@@ -27,20 +31,6 @@ USE WAREHOUSE OF_SHAREPOINT_WH;
 USE ROLE ACCOUNTADMIN;
 GRANT CREATE SEMANTIC VIEW ON SCHEMA OF_SHAREPOINT.DOCS TO ROLE OF_SHAREPOINT_ADMIN;
 GRANT CREATE AGENT ON SCHEMA OF_SHAREPOINT.DOCS TO ROLE OF_SHAREPOINT_ADMIN;
-
--- Cortex Agents uses the caller's DEFAULT ROLE and DEFAULT WAREHOUSE — not the
--- session role/warehouse.  The user's default role must have USAGE on the agent,
--- its database/schema, and a warehouse.  The default warehouse must be one that
--- role can actually use, or the Analyst tool fails with "missing execution
--- environment" even if warehouse is set in tool_resources.
-GRANT USAGE ON WAREHOUSE OF_SHAREPOINT_WH TO ROLE OPENFLOW_ADMIN;
-GRANT USAGE ON DATABASE OF_SHAREPOINT TO ROLE OPENFLOW_ADMIN;
-GRANT USAGE ON SCHEMA OF_SHAREPOINT.DOCS TO ROLE OPENFLOW_ADMIN;
-
--- Point the user's default warehouse at one the default role can reach.
--- Replace DMICHALK with your username (ALTER USER does not accept CURRENT_USER).
-ALTER USER DMICHALK SET DEFAULT_WAREHOUSE = 'OF_SHAREPOINT_WH';
-
 USE ROLE OF_SHAREPOINT_ADMIN;
 
 /* =============================================================================
@@ -112,11 +102,6 @@ CREATE OR REPLACE AGENT STORE_OPS_AGENT
     Search:
       search_service: "OF_SHAREPOINT.DOCS.CORTEX_SEARCH_SERVICE"
   $$;
-
--- Grant the user's default role USAGE on the agent (must come after CREATE AGENT).
-USE ROLE ACCOUNTADMIN;
-GRANT USAGE ON AGENT OF_SHAREPOINT.DOCS.STORE_OPS_AGENT TO ROLE OPENFLOW_ADMIN;
-USE ROLE OF_SHAREPOINT_ADMIN;
 
 /* =============================================================================
    VERIFICATION
