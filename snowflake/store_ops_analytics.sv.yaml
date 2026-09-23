@@ -16,6 +16,8 @@ tables:
       database: OF_SHAREPOINT
       schema: DOCS
       table: INSPECTION_FINDINGS
+    primary_key:
+      columns: [FILE_ID, SEVERITY, FINDING_DESCRIPTION]
     dimensions:
       - name: FILE_ID
         description: SharePoint document ID
@@ -92,6 +94,8 @@ tables:
       database: OF_SHAREPOINT
       schema: DOCS
       table: MAINTENANCE_ORDERS
+    primary_key:
+      columns: [FILE_ID]
     dimensions:
       - name: FILE_ID
         description: SharePoint document ID
@@ -183,6 +187,8 @@ tables:
       database: OF_SHAREPOINT
       schema: DOCS
       table: INCIDENT_REPORTS
+    primary_key:
+      columns: [FILE_ID]
     dimensions:
       - name: FILE_ID
         description: SharePoint document ID
@@ -258,6 +264,8 @@ tables:
       database: OF_SHAREPOINT
       schema: DOCS
       table: PLANOGRAM_FINDINGS
+    primary_key:
+      columns: [FILE_ID, COMPLIANCE_STATUS, FINDING_DESCRIPTION]
     dimensions:
       - name: FILE_ID
         description: SharePoint document ID
@@ -328,32 +336,24 @@ relationships:
     relationship_columns:
       - left_column: STORE_NUMBER
         right_column: STORE_NUMBER
-    join_type: many_to_many
-    relationship_type: binding
   - name: inspection_to_incidents
     left_table: INSPECTION_FINDINGS
     right_table: INCIDENT_REPORTS
     relationship_columns:
       - left_column: STORE_NUMBER
         right_column: STORE_NUMBER
-    join_type: many_to_many
-    relationship_type: binding
   - name: maintenance_to_incidents
     left_table: MAINTENANCE_ORDERS
     right_table: INCIDENT_REPORTS
     relationship_columns:
       - left_column: STORE_NUMBER
         right_column: STORE_NUMBER
-    join_type: many_to_many
-    relationship_type: binding
   - name: inspection_to_planograms
     left_table: INSPECTION_FINDINGS
     right_table: PLANOGRAM_FINDINGS
     relationship_columns:
       - left_column: STORE_NUMBER
         right_column: STORE_NUMBER
-    join_type: many_to_many
-    relationship_type: binding
 
 verified_queries:
   - name: critical_findings_by_store
